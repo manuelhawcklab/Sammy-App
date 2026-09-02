@@ -1,0 +1,27 @@
+{
+  "name": "Aprende con Sammy",
+  "short_name": "Sammy",
+  "description": "Familia, aula y dirección conectadas: expedientes, horarios, materiales didácticos y avances.",
+  "lang": "es",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F4F8F7",
+  "theme_color": "#0C4A44",
+  "icons": [
+    { "src": "/sammy.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    {
+      "src": "https://image.qwenlm.ai/generated-images/c61da584-ba8c-4ecc-9bd7-561d100b70ab/_result.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "https://image.qwenlm.ai/generated-images/c61da584-ba8c-4ecc-9bd7-561d100b70ab/_result.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
