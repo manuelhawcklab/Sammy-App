@@ -99,10 +99,12 @@ export default function Login() {
         const user: DBUser = data as DBUser;
         localStorage.setItem("sammy_user", JSON.stringify(user));
         
-        // Disparar evento de actualización para que useDB() detecte el cambio
-        window.dispatchEvent(new Event("storage"));
-        
         toast("success", `¡Hola de nuevo, ${user.name.split(" ")[0]}!`);
+        
+        // Redirigir al dashboard después de un breve delay
+        setTimeout(() => {
+          window.location.href = "/";
+        }, 800);
       } else {
         // Registro: mantener lógica local por ahora
         const u = registerLocal({ role, name, email, pass, group });
