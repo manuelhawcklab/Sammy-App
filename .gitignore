@@ -1,7 +1,72 @@
-﻿node_modules/
+```
+# Dependencies
+node_modules/
+
+# Environment variables
 .env
 .env.local
-.DS_Store
-*.log
+.env.*
+
+# Build outputs
 dist/
 build/
+.next/
+out/
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# IDE specific
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+
+# Compiled JavaScript
+*.js.map
+*.ts.map
+
+# Coverage
+coverage/
+htmlcov/
+.coverage
+
+# Database
+*.db
+*.db-journal
+
+# Lock files
+package-lock.json
+yarn.lock
+
+# Browserslist
+.browserslist*
+
+# ESLint
+.eslintcache
+
+# TypeScript
+*.tsbuildinfo
+
+# Supabase
+.supabase/
+
+```
