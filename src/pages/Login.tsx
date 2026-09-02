@@ -15,7 +15,7 @@ import {
   Users,
 } from "lucide-react";
 import { supabase } from "../lib/supabase";
-import { allGroups, register as registerLocal, type Role, type User as DBUser } from "../lib/db";
+import { allGroups, register as registerLocal, mutate, type Role, type User as DBUser } from "../lib/db";
 import {
   Button,
   Field,
@@ -95,9 +95,19 @@ export default function Login() {
           return;
         }
         
-        // Guardar usuario en localStorage
+        // Actualizar sesión usando mutate() - esto dispara el evento de actualización
         const user: DBUser = data as DBUser;
-        localStorage.setItem("sammy_user", JSON.stringify(user));
+        mutate((d) => {
+          d.session = user.id;
+          // Asegurar que el usuario esté en la lista local
+          if (!d.users.some((u) => u.id === user.id)) {
+            d.users.push(user);
+          } else {
+            // Actualizar usuario existente
+            const idx = d.users.findIndex((u) => u.id === user.id);
+            d.users[idx] = user;
+          }
+        });
         
         toast("success", `¡Hola de nuevo, ${user.name.split(" ")[0]}!`);
         
