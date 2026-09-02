@@ -14,8 +14,8 @@ import {
   UserPlus,
   Users,
 } from "lucide-react";
-import { allGroups, login, register } from "../lib/db";
-import type { Role } from "../lib/db";
+import { supabase } from "../lib/supabase";
+import { allGroups, register as registerLocal, type Role, type User as DBUser } from "../lib/db";
 import {
   Button,
   Field,
@@ -74,39 +74,53 @@ export default function Login() {
     return Object.keys(e).length === 0;
   };
 
-  const submit = (ev: FormEvent) => {
+  const submit = async (ev: FormEvent) => {
     ev.preventDefault();
     if (!validate()) return;
     setLoading(true);
-    window.setTimeout(() => {
-      try {
-        if (mode === "login") {
-          const u = login(email, pass);
-          toast("success", `¡Hola de nuevo, ${u.name.split(" ")[0]}!`);
-        } else {
-          const u = register({ role, name, email, pass, group });
-          confetti({
-            particleCount: 140,
-            spread: 75,
-            origin: { y: 0.35 },
-            colors: ["#12A59B", "#FFC24B", "#FF6F61", "#58B8E8", "#7DC95E"],
-          });
-          toast("success", `¡Cuenta creada! Bienvenid@, ${u.name.split(" ")[0]}.`);
+    
+    try {
+      if (mode === "login") {
+        // Consultar Supabase para autenticación
+        const { data, error } = await supabase
+          .from("users")
+          .select("*")
+          .eq("email", email)
+          .eq("pass", pass)
+          .single();
+        
+        if (error || !data) {
+          toast("error", "Correo o contraseña incorrectos");
+          setLoading(false);
+          return;
         }
-      } catch (err) {
-        toast("error", err instanceof Error ? err.message : "Algo salió mal.");
-      } finally {
-        setLoading(false);
+        
+        // Guardar usuario en localStorage
+        const user: DBUser = data as DBUser;
+        localStorage.setItem("sammy_user", JSON.stringify(user));
+        
+        toast("success", `¡Hola de nuevo, ${user.name.split(" ")[0]}!`);
+        
+        // Redirigir al dashboard después de un breve delay
+        setTimeout(() => {
+          window.location.href = "/";
+        }, 800);
+      } else {
+        // Registro: mantener lógica local por ahora
+        const u = registerLocal({ role, name, email, pass, group });
+        confetti({
+          particleCount: 140,
+          spread: 75,
+          origin: { y: 0.35 },
+          colors: ["#12A59B", "#FFC24B", "#FF6F61", "#58B8E8", "#7DC95E"],
+        });
+        toast("success", `¡Cuenta creada! Bienvenid@, ${u.name.split(" ")[0]}.`);
       }
-    }, 650);
-  };
-
-  const fillDemo = (r: Role) => {
-    setMode("login");
-    setEmail(r === "parent" ? "familia@sammy.app" : r === "educator" ? "miss@sammy.app" : "admin@sammy.app");
-    setPass("sammy123");
-    setErrors({});
-    toast("info", "Credenciales de demostración cargadas. Pulsa Entrar.");
+    } catch (err) {
+      toast("error", err instanceof Error ? err.message : "Algo salió mal.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -285,26 +299,6 @@ export default function Login() {
                 {mode === "login" ? "Entrar" : "Crear mi cuenta"}
               </Button>
             </form>
-
-            <div className="mt-6 rounded-xl border-2 border-dashed border-sea/50 bg-mint/60 p-4">
-              <p className="text-[13px] font-black tracking-wide text-seadeep uppercase">
-                Cuentas de prueba
-              </p>
-              <div className="mt-2 flex flex-wrap gap-2">
-                <Button size="sm" variant="ghost" onClick={() => fillDemo("parent")} icon={<Users size={15} />}>
-                  Entrar como familia
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => fillDemo("educator")} icon={<GraduationCap size={15} />}>
-                  Entrar como educador
-                </Button>
-                <Button size="sm" variant="sun" onClick={() => fillDemo("admin")} icon={<ShieldCheck size={15} />}>
-                  Entrar como dirección
-                </Button>
-              </div>
-              <p className="mt-2 text-xs font-bold text-ink/45">
-                familia@sammy.app · miss@sammy.app · admin@sammy.app — contraseña: sammy123
-              </p>
-            </div>
           </div>
 
           <p className="mt-4 text-center text-xs font-bold text-ink/40">

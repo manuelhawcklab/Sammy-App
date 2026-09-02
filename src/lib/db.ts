@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { differenceInMonths, differenceInYears, format, parseISO } from "date-fns";
 import { es } from "date-fns/locale";
+import { supabase } from "./supabase";
 
 /* ============ Tipos ============ */
 export type Role = "parent" | "educator" | "admin";
@@ -609,3 +610,98 @@ export const toMin = (hhmm: string): number => {
 };
 export const visibleMaterials = (d: DBShape, groups: string[]): Material[] =>
   d.materials.filter((m) => m.scope === "all" || groups.includes(m.scope));
+
+/* ============ Integración con Supabase ============ */
+
+/**
+ * Carga datos desde las 6 tablas de Supabase en paralelo.
+ * Retorna un objeto DBShape con los datos o null si hay error.
+ */
+export async function loadFromSupabase(): Promise<DBShape | null> {
+  try {
+    const [groupsRes, usersRes, childrenRes, blocksRes, materialsRes, entriesRes] = await Promise.all([
+      supabase.from("groups").select("*"),
+      supabase.from("users").select("*"),
+      supabase.from("children").select("*"),
+      supabase.from("blocks").select("*"),
+      supabase.from("materials").select("*"),
+      supabase.from("entries").select("*"),
+    ]);
+
+    // Verificar errores en cada consulta
+    const errors = [
+      { table: "groups", error: groupsRes.error },
+      { table: "users", error: usersRes.error },
+      { table: "children", error: childrenRes.error },
+      { table: "blocks", error: blocksRes.error },
+      { table: "materials", error: materialsRes.error },
+      { table: "entries", error: entriesRes.error },
+    ].filter((e) => e.error);
+
+    if (errors.length > 0) {
+      console.error("Errores al cargar desde Supabase:", errors);
+      return null;
+    }
+
+    return {
+      v: 4,
+      groups: groupsRes.data || [],
+      users: usersRes.data || [],
+      children: childrenRes.data || [],
+      blocks: blocksRes.data || [],
+      materials: materialsRes.data || [],
+      entries: entriesRes.data || [],
+      session: null,
+    };
+  } catch (err) {
+    console.error("Error inesperado al cargar desde Supabase:", err);
+    return null;
+  }
+}
+
+/**
+ * Inserta o actualiza un registro en la tabla especificada.
+ * Retorna true si éxito, false si error.
+ */
+export async function saveToSupabase(table: string, data: any): Promise<boolean> {
+  try {
+    const { error } = await supabase.from(table).upsert(data, { onConflict: "id" });
+    if (error) {
+      console.error(`Error al guardar en ${table}:`, error);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error(`Error inesperado al guardar en ${table}:`, err);
+    return false;
+  }
+}
+
+/**
+ * Sincroniza los datos actuales de localStorage hacia Supabase.
+ * Sube tabla por tabla y maneja errores gracefully.
+ */
+export async function syncLocalToSupabase(): Promise<void> {
+  const localDB = db;
+  
+  const tables: Array<keyof Omit<DBShape, "v" | "session">> = [
+    "groups",
+    "users",
+    "children",
+    "blocks",
+    "materials",
+    "entries",
+  ];
+
+  for (const table of tables) {
+    const records = localDB[table];
+    if (!Array.isArray(records) || records.length === 0) continue;
+
+    const success = await saveToSupabase(table, records);
+    if (!success) {
+      console.warn(`No se pudo sincronizar la tabla ${table}`);
+    } else {
+      console.log(`Tabla ${table} sincronizada correctamente (${records.length} registros)`);
+    }
+  }
+}

@@ -20,6 +20,7 @@ import {
 import { currentUser, groupById, logout, useDB } from "./lib/db";
 import type { Role, User } from "./lib/db";
 import { useInstall } from "./lib/pwa";
+import { useSupabaseDB } from "./lib/useSupabaseDB";
 import { Avatar, Chip, SammyImg, ToastProvider, useToast } from "./components/ui";
 import Login from "./pages/Login";
 import HomePage from "./pages/Home";
@@ -291,8 +292,41 @@ function Shell({ me }: { me: User }) {
 function Root() {
   const db = useDB();
   const me = currentUser(db);
+  const { db: supabaseDb, loading, error } = useSupabaseDB();
+
+  // Banner de estado de conexión a Supabase
+  const connectionBanner = (() => {
+    if (loading) {
+      return (
+        <div className="fixed top-0 left-0 right-0 z-50 bg-blue-500 text-white text-center py-2 text-sm font-semibold">
+          🔄 Conectando a la nube...
+        </div>
+      );
+    }
+    if (error) {
+      return (
+        <div className="fixed top-0 left-0 right-0 z-50 bg-red-500 text-white text-center py-2 text-sm font-semibold">
+          ❌ Error de conexión: {error}
+        </div>
+      );
+    }
+    if (supabaseDb) {
+      return (
+        <div className="fixed top-0 left-0 right-0 z-50 bg-green-500 text-white text-center py-2 text-sm font-semibold">
+          ✅ Conectado a Supabase | Grupos: {supabaseDb.groups.length} | Usuarios: {supabaseDb.users.length}
+        </div>
+      );
+    }
+    return null;
+  })();
+
   if (!me) return <Login />;
-  return <Shell key={me.id} me={me} />;
+  return (
+    <>
+      {connectionBanner}
+      <Shell key={me.id} me={me} />
+    </>
+  );
 }
 
 export default function App() {

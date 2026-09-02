@@ -1,7 +1,51 @@
-﻿node_modules/
-.env
-.env.local
-.DS_Store
-*.log
+```gitignore
+# Dependencies
+node_modules/
+
+# Build outputs
 dist/
 build/
+.next/
+.nuxt/
+public/build/
+
+# Logs
+*.log
+
+# Environment variables
+.env
+.env.local
+.env.*
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*.tmp
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+.coverage
+coverage/
+htmlcov/
+
+# Compiled JavaScript
+*.js.map
+*.jsx.map
+*.ts.map
+*.tsx.map
+
+# OS generated files
+.DS_Store
+Thumbs.db
+```
+
+Wait, let me reconsider. The only modified file is `src/pages/Login.tsx` which is a TypeScript React component file. There are no build artifacts, dependency directories, or temporary files in the changes. According to rule 6, if the changes contain only source files and no build artifacts, dependencies, or temp files, I should output an empty .gitignore.
+
+(empty)
