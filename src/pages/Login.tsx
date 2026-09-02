@@ -101,14 +101,6 @@ export default function Login() {
     }, 650);
   };
 
-  const fillDemo = (r: Role) => {
-    setMode("login");
-    setEmail(r === "parent" ? "familia@sammy.app" : r === "educator" ? "miss@sammy.app" : "admin@sammy.app");
-    setPass("sammy123");
-    setErrors({});
-    toast("info", "Credenciales de demostración cargadas. Pulsa Entrar.");
-  };
-
   return (
     <div className="grid min-h-screen lg:grid-cols-[1.05fr_1fr]">
       {/* ---- Panel de marca ---- */}
@@ -285,26 +277,6 @@ export default function Login() {
                 {mode === "login" ? "Entrar" : "Crear mi cuenta"}
               </Button>
             </form>
-
-            <div className="mt-6 rounded-xl border-2 border-dashed border-sea/50 bg-mint/60 p-4">
-              <p className="text-[13px] font-black tracking-wide text-seadeep uppercase">
-                Cuentas de prueba
-              </p>
-              <div className="mt-2 flex flex-wrap gap-2">
-                <Button size="sm" variant="ghost" onClick={() => fillDemo("parent")} icon={<Users size={15} />}>
-                  Entrar como familia
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => fillDemo("educator")} icon={<GraduationCap size={15} />}>
-                  Entrar como educador
-                </Button>
-                <Button size="sm" variant="sun" onClick={() => fillDemo("admin")} icon={<ShieldCheck size={15} />}>
-                  Entrar como dirección
-                </Button>
-              </div>
-              <p className="mt-2 text-xs font-bold text-ink/45">
-                familia@sammy.app · miss@sammy.app · admin@sammy.app — contraseña: sammy123
-              </p>
-            </div>
           </div>
 
           <p className="mt-4 text-center text-xs font-bold text-ink/40">
