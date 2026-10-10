@@ -70,7 +70,7 @@ export function ChildForm({
     setErrors({});
   }, [open, initial, isParent, me.group]);
 
-  const submit = () => {
+  const submit = async () => {
     const e: Record<string, string> = {};
     if (name.trim().length < 2) e.name = "Escribe el nombre del peque.";
     if (!birth) e.birth = "Selecciona la fecha de nacimiento.";
@@ -79,20 +79,26 @@ export function ChildForm({
     setErrors(e);
     if (Object.keys(e).length > 0) return;
 
-    saveChild({
-      id: initial?.id,
-      parentId: isParent ? me.id : parentLink || null,
-      name: name.trim(),
-      birth,
-      group,
-      emoji,
-      color,
-      allergies: allergiesText.split(",").map((s) => s.trim()).filter(Boolean),
-      authorized: authorized.trim(),
-      notes: notes.trim(),
-    });
+    try {
+      // saveChild es write-through: espera confirmación de Supabase.
+      await saveChild({
+        id: initial?.id,
+        parentId: isParent ? me.id : parentLink || null,
+        name: name.trim(),
+        birth,
+        group,
+        emoji,
+        color,
+        allergies: allergiesText.split(",").map((s) => s.trim()).filter(Boolean),
+        authorized: authorized.trim(),
+        notes: notes.trim(),
+      });
+    } catch (err) {
+      toast("error", err instanceof Error ? err.message : "No se pudo guardar el expediente en la nube.");
+      return; // NO cerramos el modal ni mostramos éxito si la nube falló
+    }
     if (initial) {
-      toast("success", `Expediente de ${name.split(" ")[0]} actualizado.`);
+      toast("success", `Expediente de ${name.split(" ")[0]} actualizado y sincronizado.`);
     } else {
       confetti({ particleCount: 110, spread: 70, origin: { y: 0.4 }, colors: ["#12A59B", "#FFC24B", "#FF6F61", "#58B8E8"] });
       toast("success", `¡${name.split(" ")[0]} ya tiene su expediente en Sammy!`);
@@ -248,10 +254,14 @@ function ChildDetail({
                   size="sm"
                   variant="coral"
                   icon={<Trash2 size={14} />}
-                  onClick={() => {
-                    deleteChild(child.id);
-                    toast("info", `Expediente de ${child.name.split(" ")[0]} eliminado.`);
-                    onClose();
+                  onClick={async () => {
+                    try {
+                      await deleteChild(child.id);
+                      toast("info", `Expediente de ${child.name.split(" ")[0]} eliminado.`);
+                      onClose();
+                    } catch (err) {
+                      toast("error", err instanceof Error ? err.message : "No se pudo eliminar en la nube.");
+                    }
                   }}
                 >
                   Sí, eliminar

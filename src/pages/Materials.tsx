@@ -74,7 +74,7 @@ function UploadPanel({ me }: { me: User }) {
     setFileKey((k) => k + 1);
   };
 
-  const publish = () => {
+  const publish = async () => {
     if (title.trim().length < 4) {
       setError("Escribe un título descriptivo (mínimo 4 caracteres).");
       return;
@@ -89,27 +89,28 @@ function UploadPanel({ me }: { me: User }) {
     }
     setError("");
     setPublishing(true);
-    window.setTimeout(() => {
-      try {
-        addMaterial({
-          authorId: me.id,
-          title: title.trim(),
-          desc: desc.trim() || `Material compartido por ${me.name}.`,
-          category,
-          scope,
-          fileName: useUrl ? undefined : file?.name,
-          size: useUrl ? undefined : file?.size,
-          dataUrl: useUrl ? undefined : file?.dataUrl,
-          url: useUrl ? url.trim() : undefined,
-        });
-        toast("success", "¡Material publicado! Las familias ya pueden descargarlo.");
-        reset();
-      } catch (err) {
-        toast("error", err instanceof Error ? err.message : "No se pudo publicar el material.");
-      } finally {
-        setPublishing(false);
-      }
-    }, 550);
+    try {
+      // Publicación estricta: addMaterial espera la confirmación de Supabase.
+      // Si la nube rechaza la escritura, se muestra el error real y el
+      // material NO queda publicado (syncMutate revierte el estado local).
+      await addMaterial({
+        authorId: me.id,
+        title: title.trim(),
+        desc: desc.trim() || `Material compartido por ${me.name}.`,
+        category,
+        scope,
+        fileName: useUrl ? undefined : file?.name,
+        size: useUrl ? undefined : file?.size,
+        dataUrl: useUrl ? undefined : file?.dataUrl,
+        url: useUrl ? url.trim() : undefined,
+      });
+      toast("success", "¡Material publicado! Las familias ya pueden descargarlo.");
+      reset();
+    } catch (err) {
+      toast("error", err instanceof Error ? err.message : "No se pudo publicar el material.");
+    } finally {
+      setPublishing(false);
+    }
   };
 
   const scopeOptions =
@@ -359,10 +360,15 @@ export default function MaterialsPage({ me }: { me: User; go: (p: Page) => void 
                     {canDelete &&
                       (delId === m.id ? (
                         <button
-                          onClick={() => {
-                            deleteMaterial(m.id);
-                            setDelId(null);
-                            toast("info", "Material eliminado de la biblioteca.");
+                          onClick={async () => {
+                            try {
+                              await deleteMaterial(m.id);
+                              setDelId(null);
+                              toast("info", "Material eliminado de la biblioteca.");
+                            } catch (err) {
+                              setDelId(null);
+                              toast("error", err instanceof Error ? err.message : "No se pudo eliminar el material.");
+                            }
                           }}
                           className="btn-toy rounded-lg border-2 border-ink bg-coral px-2 py-1 text-[11px] font-black text-white shadow-toy-xs"
                         >

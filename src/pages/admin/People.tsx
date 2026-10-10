@@ -57,7 +57,7 @@ function UserForm({ open, onClose, initial }: { open: boolean; onClose: () => vo
     setErrors({});
   }, [open, initial]);
 
-  const submit = () => {
+  const submit = async () => {
     const e: Record<string, string> = {};
     if (name.trim().length < 3) e.name = "Escribe el nombre completo.";
     if (!/^\S+@\S+\.\S+$/.test(email)) e.email = "Correo inválido.";
@@ -67,20 +67,22 @@ function UserForm({ open, onClose, initial }: { open: boolean; onClose: () => vo
     if (Object.keys(e).length) return;
     try {
       if (initial) {
-        updateUser(initial.id, {
+        // updateUser es write-through: espera confirmación de Supabase.
+        await updateUser(initial.id, {
           name: name.trim(),
           email,
           pass,
           role,
           group: role === "educator" ? group : undefined,
         });
-        toast("success", `Cuenta de ${name.split(" ")[0]} actualizada.`);
+        toast("success", `Cuenta de ${name.split(" ")[0]} actualizada y sincronizada.`);
       } else {
-        adminCreateUser({ role, name, email, pass, group });
+        await adminCreateUser({ role, name, email, pass, group });
         toast("success", "Usuario creado. Ya puede iniciar sesión con su correo y contraseña.");
       }
       onClose();
     } catch (err) {
+      // Error real de la nube (RLS, esquema, red): se muestra y NO se cierra el modal.
       toast("error", err instanceof Error ? err.message : "No se pudo guardar el usuario.");
     }
   };
@@ -273,14 +275,15 @@ export default function PeoplePage({ me }: { me: User }) {
                           <Button
                             size="sm"
                             variant="coral"
-                            onClick={() => {
+                            onClick={async () => {
                               try {
-                                deleteUser(u.id);
+                                // deleteRow confirma en la nube antes de borrar local.
+                                await deleteUser(u.id);
                                 toast("info", `Cuenta de ${u.name.split(" ")[0]} eliminada.`);
+                                setDelUser(null);
                               } catch (err) {
                                 toast("error", err instanceof Error ? err.message : "No se pudo eliminar.");
                               }
-                              setDelUser(null);
                             }}
                           >
                             ¿Eliminar?
@@ -357,16 +360,20 @@ export default function PeoplePage({ me }: { me: User }) {
                         <p className="mb-1 text-[10px] font-black tracking-wide text-ink/45 uppercase">Familia asignada</p>
                         <Select
                           value={k.parentId ?? ""}
-                          onChange={(e) => {
+                          onChange={async (e) => {
                             const v = e.target.value;
-                            saveChild({ ...k, parentId: v || null });
-                            const p = parents.find((x) => x.id === v);
-                            toast(
-                              "success",
-                              p
-                                ? `${k.name.split(" ")[0]} ahora está con la familia de ${p.name}.`
-                                : `${k.name.split(" ")[0]} quedó sin familia vinculada.`
-                            );
+                            try {
+                              await saveChild({ ...k, parentId: v || null });
+                              const p = parents.find((x) => x.id === v);
+                              toast(
+                                "success",
+                                p
+                                  ? `${k.name.split(" ")[0]} ahora está con la familia de ${p.name}.`
+                                  : `${k.name.split(" ")[0]} quedó sin familia vinculada.`
+                              );
+                            } catch (err) {
+                              toast("error", err instanceof Error ? err.message : "No se pudo actualizar el expediente.");
+                            }
                           }}
                         >
                           <option value="">— Sin familia —</option>
@@ -381,9 +388,13 @@ export default function PeoplePage({ me }: { me: User }) {
                         <p className="mb-1 text-[10px] font-black tracking-wide text-ink/45 uppercase">Sala</p>
                         <Select
                           value={k.group}
-                          onChange={(e) => {
-                            saveChild({ ...k, group: e.target.value });
-                            toast("success", `${k.name.split(" ")[0]} se movió a ${groupById(e.target.value)?.name}.`);
+                          onChange={async (e) => {
+                            try {
+                              await saveChild({ ...k, group: e.target.value });
+                              toast("success", `${k.name.split(" ")[0]} se movió a ${groupById(e.target.value)?.name}.`);
+                            } catch (err) {
+                              toast("error", err instanceof Error ? err.message : "No se pudo actualizar la sala.");
+                            }
                           }}
                         >
                           {allGroups().map((g) => (
@@ -411,10 +422,14 @@ export default function PeoplePage({ me }: { me: User }) {
                           <Button
                             size="sm"
                             variant="coral"
-                            onClick={() => {
-                              deleteChild(k.id);
-                              setDelKid(null);
-                              toast("info", `Expediente de ${k.name.split(" ")[0]} eliminado.`);
+                            onClick={async () => {
+                              try {
+                                await deleteChild(k.id);
+                                setDelKid(null);
+                                toast("info", `Expediente de ${k.name.split(" ")[0]} eliminado.`);
+                              } catch (err) {
+                                toast("error", err instanceof Error ? err.message : "No se pudo eliminar el expediente.");
+                              }
                             }}
                           >
                             ¿Eliminar?
