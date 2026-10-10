@@ -57,7 +57,7 @@ function BlockForm({
     setError("");
   }, [open, initial]);
 
-  const submit = () => {
+  const submit = async () => {
     if (title.trim().length < 3) {
       setError("Escribe el nombre de la actividad.");
       return;
@@ -66,9 +66,14 @@ function BlockForm({
       setError("La hora de inicio debe ser anterior a la de fin.");
       return;
     }
-    saveBlock({ id: initial?.id, group, day, title: title.trim(), kind, start, end });
-    toast("success", initial ? "Bloque actualizado." : `Bloque agregado al ${DAYS[day - 1]}.`);
-    onClose();
+    try {
+      // saveBlock es write-through: espera confirmación de Supabase.
+      await saveBlock({ id: initial?.id, group, day, title: title.trim(), kind, start, end });
+      toast("success", initial ? "Bloque actualizado." : `Bloque agregado al ${DAYS[day - 1]}.`);
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo guardar el bloque en la nube.");
+    }
   };
 
   return (
@@ -315,10 +320,14 @@ export default function SchedulePage({ me }: { me: User; go: (p: Page) => void }
                         </button>
                         {delId === b.id ? (
                           <button
-                            onClick={() => {
-                              deleteBlock(b.id);
+                            onClick={async () => {
                               setDelId(null);
-                              toast("info", "Bloque eliminado del horario.");
+                              try {
+                                await deleteBlock(b.id);
+                                toast("info", "Bloque eliminado del horario.");
+                              } catch (err) {
+                                toast("error", err instanceof Error ? err.message : "No se pudo eliminar el bloque.");
+                              }
                             }}
                             className="btn-toy flex h-8 w-8 items-center justify-center rounded-lg border-2 border-ink bg-coral text-white shadow-toy-xs"
                             aria-label="Confirmar eliminación"

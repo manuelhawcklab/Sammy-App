@@ -76,21 +76,26 @@ function EntryForm({
     setError("");
   }, [open]);
 
-  const submit = () => {
+  const submit = async () => {
     if (note.trim().length < 5) {
       setError("Describe el logro con al menos 5 caracteres.");
       return;
     }
-    addEntry({
-      childId,
-      authorId: me.id,
-      area,
-      stars,
-      note: note.trim(),
-      date: new Date(`${date}T12:00:00`).toISOString(),
-    });
-    toast("success", `Avance registrado para ${childName.split(" ")[0]}. ¡A celebrar!`);
-    onClose();
+    try {
+      // addEntry es write-through: espera confirmación de Supabase antes del éxito.
+      await addEntry({
+        childId,
+        authorId: me.id,
+        area,
+        stars,
+        note: note.trim(),
+        date: new Date(`${date}T12:00:00`).toISOString(),
+      });
+      toast("success", `Avance registrado para ${childName.split(" ")[0]}. ¡A celebrar!`);
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo registrar el avance en la nube.");
+    }
   };
 
   return (
@@ -358,10 +363,14 @@ export default function ProgressPage({ me }: { me: User; go: (p: Page) => void }
                         (delId === e.id ? (
                           <div className="flex shrink-0 flex-col gap-1">
                             <button
-                              onClick={() => {
-                                deleteEntry(e.id);
+                              onClick={async () => {
                                 setDelId(null);
-                                toast("info", "Avance eliminado.");
+                                try {
+                                  await deleteEntry(e.id);
+                                  toast("info", "Avance eliminado.");
+                                } catch (err) {
+                                  toast("error", err instanceof Error ? err.message : "No se pudo eliminar el avance.");
+                                }
                               }}
                               className="btn-toy rounded-lg border-2 border-ink bg-coral px-2 py-1 text-[11px] font-black text-white shadow-toy-xs"
                             >

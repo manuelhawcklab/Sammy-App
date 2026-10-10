@@ -41,19 +41,24 @@ function GroupForm({ open, onClose, initial }: { open: boolean; onClose: () => v
     setError("");
   }, [open, initial]);
 
-  const submit = () => {
+  const submit = async () => {
     if (name.trim().length < 3) {
       setError("El nombre del aula necesita al menos 3 caracteres.");
       return;
     }
-    if (initial) {
-      updateGroup(initial.id, { name: name.trim(), ages: ages.trim() || "Por definir", emoji });
-      toast("success", `Aula “${name.trim()}” actualizada.`);
-    } else {
-      addGroup({ name: name.trim(), ages: ages.trim() || "Por definir", emoji });
-      toast("success", `¡Aula “${name.trim()}” creada! Ya puedes asignarle niños y educadores.`);
+    try {
+      // addGroup/updateGroup son write-through: esperan confirmación de Supabase.
+      if (initial) {
+        await updateGroup(initial.id, { name: name.trim(), ages: ages.trim() || "Por definir", emoji });
+        toast("success", `Aula “${name.trim()}” actualizada y sincronizada.`);
+      } else {
+        await addGroup({ name: name.trim(), ages: ages.trim() || "Por definir", emoji });
+        toast("success", `¡Aula “${name.trim()}” creada! Ya puedes asignarle niños y educadores.`);
+      }
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo guardar el aula en la nube.");
     }
-    onClose();
   };
 
   return (
@@ -170,14 +175,14 @@ export default function AulasPage() {
                       </button>
                       {delId === g.id ? (
                         <button
-                          onClick={() => {
+                          onClick={async () => {
+                            setDelId(null);
                             try {
-                              deleteGroup(g.id);
+                              await deleteGroup(g.id);
                               toast("info", `Aula “${g.name}” eliminada.`);
                             } catch (err) {
                               toast("error", err instanceof Error ? err.message : "No se pudo eliminar.");
                             }
-                            setDelId(null);
                           }}
                           className="btn-toy flex h-8 items-center justify-center rounded-lg border-2 border-ink bg-coral px-2 text-[11px] font-black text-white shadow-toy-xs"
                         >

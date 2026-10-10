@@ -1,7 +1,8 @@
 import { useSyncExternalStore } from "react";
 import { differenceInMonths, differenceInYears, format, parseISO } from "date-fns";
 import { es } from "date-fns/locale";
-import { supabase } from "./supabase";
+import { supabase, isSupabaseConfigured } from "./supabase";
+import { upsertRow, upsertRows, deleteRow } from "./cloud";
 
 /* ============ Tipos ============ */
 export type Role = "parent" | "educator" | "admin";
@@ -260,6 +261,56 @@ export function mutate(fn: (d: DBShape) => void) {
   emit();
 }
 
+/** Captura una foto del estado actual (para poder revertir cambios optimistas). */
+const snapshot = (): DBShape => JSON.parse(JSON.stringify(db)) as DBShape;
+
+/** Restaura un estado previo y notifica a los suscriptores. */
+function restore(prev: DBShape): void {
+  db = prev;
+  persist();
+  emit();
+}
+
+type TableName = "groups" | "users" | "children" | "blocks" | "materials" | "entries";
+
+/**
+ * MUTACIÓN CON SINCRONIZACIÓN ESTRICTA A LA NUBE (write-through).
+ *
+ * 1. Captura un snapshot del estado local.
+ * 2. Aplica el cambio local (UI optimista) y hace `await` del upsert en
+ *    Supabase evaluando el objeto `error` (nunca lo silencia).
+ * 3. Si la nube rechaza la operación → REVIERTE el estado local y
+ *    relanza el error para que la UI muestre el mensaje real al usuario.
+ */
+export async function syncMutate(
+  table: TableName,
+  applyLocal: (d: DBShape) => void,
+  cloudRow: Record<string, unknown>,
+): Promise<void> {
+  const prev = snapshot();
+  mutate(applyLocal);
+  try {
+    await upsertRow(table, cloudRow);
+  } catch (err) {
+    restore(prev); // rollback: la UI vuelve al estado anterior real
+    throw err;
+  }
+}
+
+/**
+ * Eliminación con confirmación en la nube: primero se envía el DELETE a
+ * Supabase; si la nube lo rechaza (RLS, red, etc.) se lanza el error y
+ * nada cambia en el estado local. Solo tras la confirmación se borra local.
+ */
+export async function deleteRecord(
+  table: TableName,
+  id: string,
+  applyLocal: (d: DBShape) => void,
+): Promise<void> {
+  await deleteRow(table, id); // lanza CloudSyncError si la nube lo rechaza
+  mutate(applyLocal); // solo ahora aplicamos el borrado local
+}
+
 export function useDB(): DBShape {
   return useSyncExternalStore(
     (f) => {
@@ -273,7 +324,13 @@ export function useDB(): DBShape {
 }
 
 /* ============ Auth ============ */
-export function register(data: { role: Role; name: string; email: string; pass: string; group?: string }): User {
+
+/**
+ * Registro estricto: primero confirma la cuenta en Supabase (await + error
+ * evaluado) y SOLO DESPUÉS actualiza el estado local. Si la nube falla,
+ * se lanza el error y la UI no muestra éxito ni cambia el estado.
+ */
+export async function register(data: { role: Role; name: string; email: string; pass: string; group?: string }): Promise<User> {
   const email = data.email.trim().toLowerCase();
   if (db.users.some((u) => u.email === email))
     throw new Error("Ya existe una cuenta con ese correo. Intenta iniciar sesión.");
@@ -287,6 +344,9 @@ export function register(data: { role: Role; name: string; email: string; pass: 
     color: AVATAR_COLORS[db.users.length % AVATAR_COLORS.length],
     createdAt: new Date().toISOString(),
   };
+  // 1) Escritura confirmada en la nube (lanza CloudSyncError si falla).
+  await upsertRow("users", user as unknown as Record<string, unknown>);
+  // 2) Solo entonces actualizamos el estado local.
   mutate((d) => {
     d.users.push(user);
     d.session = user.id;
@@ -294,8 +354,35 @@ export function register(data: { role: Role; name: string; email: string; pass: 
   return user;
 }
 
-export function login(email: string, pass: string): User {
-  const u = db.users.find((x) => x.email === email.trim().toLowerCase() && x.pass === pass);
+/**
+ * Inicio de sesión estricto: valida credenciales contra Supabase cuando está
+ * configurado; cualquier error de consulta se propaga (no se silencia).
+ */
+export async function login(email: string, pass: string): Promise<User> {
+  const normalized = email.trim().toLowerCase();
+  if (isSupabaseConfigured && supabase) {
+    const { data, error } = await supabase
+      .from("users")
+      .select("*")
+      .eq("email", normalized)
+      .maybeSingle();
+    if (error) {
+      throw new Error(`No se pudo verificar tu cuenta en la nube (${error.code}): ${error.message}`);
+    }
+    if (!data || (data as User).pass !== pass) {
+      throw new Error("Correo o contraseña incorrectos.");
+    }
+    const user = data as User;
+    mutate((d) => {
+      const idx = d.users.findIndex((u) => u.id === user.id);
+      if (idx >= 0) d.users[idx] = user;
+      else d.users.push(user);
+      d.session = user.id;
+    });
+    return user;
+  }
+  // Modo local sin nube configurada: validación contra el almacenamiento del dispositivo.
+  const u = db.users.find((x) => x.email === normalized && x.pass === pass);
   if (!u) throw new Error("Correo o contraseña incorrectos.");
   mutate((d) => {
     d.session = u.id;
@@ -303,27 +390,54 @@ export function login(email: string, pass: string): User {
   return u;
 }
 
+/**
+ * Registro estricto de acceso directo (helper para componentes):
+ * SIEMPRE confirma primero en la nube y solo después abre sesión local.
+ */
+export async function registerAndLogin(data: {
+  role: Role;
+  name: string;
+  email: string;
+  pass: string;
+  group?: string;
+}): Promise<User> {
+  return register(data);
+}
+
 export const logout = () => mutate((d) => void (d.session = null));
 export const currentUser = (d: DBShape): User | null =>
   d.users.find((u) => u.id === d.session) ?? null;
 
 /* ============ Aulas ============ */
-export function addGroup(input: { name: string; emoji: string; ages: string }): Group {
+export async function addGroup(input: { name: string; emoji: string; ages: string }): Promise<Group> {
   const g: Group = { ...input, id: uid() };
-  mutate((d) => d.groups.push(g));
+  await syncMutate("groups", (d) => d.groups.push(g), g as unknown as Record<string, unknown>);
   return g;
 }
-export function updateGroup(id: string, patch: Partial<Omit<Group, "id">>) {
-  mutate((d) => {
-    const g = d.groups.find((x) => x.id === id);
-    if (g) Object.assign(g, patch);
-  });
+export async function updateGroup(id: string, patch: Partial<Omit<Group, "id">>) {
+  const current = db.groups.find((x) => x.id === id);
+  if (!current) throw new Error("No se encontró el aula.");
+  const next: Group = { ...current, ...patch };
+  await syncMutate(
+    "groups",
+    (d) => {
+      const g = d.groups.find((x) => x.id === id);
+      if (g) Object.assign(g, patch);
+    },
+    next as unknown as Record<string, unknown>,
+  );
 }
-export function deleteGroup(id: string) {
+export async function deleteGroup(id: string) {
   const kids = db.children.filter((c) => c.group === id).length;
   const educators = db.users.filter((u) => u.role === "educator" && u.group === id).length;
   if (kids > 0 || educators > 0)
     throw new Error("Primero reasigna a los niños y educadores de esta aula desde Personas.");
+  // Primero confirmamos en la nube; si falla, nada cambia en local.
+  await deleteRow("groups", id);
+  const removedBlocks = db.blocks.filter((b) => b.group === id).map((b) => b.id);
+  const removedMaterials = db.materials.filter((m) => m.scope === id).map((m) => m.id);
+  for (const bid of removedBlocks) await deleteRow("blocks", bid);
+  for (const mid of removedMaterials) await deleteRow("materials", mid);
   mutate((d) => {
     d.groups = d.groups.filter((g) => g.id !== id);
     d.blocks = d.blocks.filter((b) => b.group !== id);
@@ -332,7 +446,7 @@ export function deleteGroup(id: string) {
 }
 
 /* ============ Usuarios (admin) ============ */
-export function adminCreateUser(data: { role: Role; name: string; email: string; pass: string; group?: string }): User {
+export async function adminCreateUser(data: { role: Role; name: string; email: string; pass: string; group?: string }): Promise<User> {
   const email = data.email.trim().toLowerCase();
   if (db.users.some((u) => u.email === email))
     throw new Error("Ya existe una cuenta con ese correo.");
@@ -346,30 +460,38 @@ export function adminCreateUser(data: { role: Role; name: string; email: string;
     color: AVATAR_COLORS[db.users.length % AVATAR_COLORS.length],
     createdAt: new Date().toISOString(),
   };
-  mutate((d) => d.users.push(user));
+  await syncMutate("users", (d) => d.users.push(user), user as unknown as Record<string, unknown>);
   return user;
 }
 
-export function updateUser(id: string, patch: Partial<User>): User {
+export async function updateUser(id: string, patch: Partial<User>): Promise<User> {
   if (patch.email) {
     const email = patch.email.trim().toLowerCase();
     if (db.users.some((u) => u.id !== id && u.email === email))
       throw new Error("Ya existe otra cuenta con ese correo.");
     patch = { ...patch, email };
   }
-  mutate((d) => {
-    const u = d.users.find((x) => x.id === id);
-    if (u) Object.assign(u, patch);
-  });
+  const current = db.users.find((x) => x.id === id);
+  if (!current) throw new Error("No se encontró la cuenta de usuario.");
+  const next: User = { ...current, ...patch };
+  await syncMutate(
+    "users",
+    (d) => {
+      const u = d.users.find((x) => x.id === id);
+      if (u) Object.assign(u, patch);
+    },
+    next as unknown as Record<string, unknown>,
+  );
   return db.users.find((u) => u.id === id)!;
 }
 
-export function deleteUser(id: string) {
+export async function deleteUser(id: string) {
   const target = db.users.find((u) => u.id === id);
   if (!target) return;
   if (id === db.session) throw new Error("No puedes eliminar la cuenta con la que estás en sesión.");
   if (target.role === "admin" && db.users.filter((u) => u.role === "admin").length <= 1)
     throw new Error("Debe existir al menos una cuenta de dirección.");
+  await deleteRow("users", id);
   mutate((d) => {
     d.users = d.users.filter((u) => u.id !== id);
     d.children.forEach((c) => {
@@ -380,20 +502,26 @@ export function deleteUser(id: string) {
 
 /* ============ Niños ============ */
 export type ChildInput = Omit<Child, "id" | "createdAt"> & { id?: string };
-export function saveChild(input: ChildInput): Child {
+export async function saveChild(input: ChildInput): Promise<Child> {
   const existing = input.id ? db.children.find((c) => c.id === input.id) : undefined;
   if (existing) {
-    mutate((d) => {
-      const c = d.children.find((x) => x.id === input.id);
-      if (c) Object.assign(c, input);
-    });
-    return { ...existing, ...input };
+    const next: Child = { ...existing, ...input };
+    await syncMutate(
+      "children",
+      (d) => {
+        const c = d.children.find((x) => x.id === input.id);
+        if (c) Object.assign(c, input);
+      },
+      next as unknown as Record<string, unknown>,
+    );
+    return next;
   }
   const child: Child = { ...input, id: uid(), createdAt: new Date().toISOString() };
-  mutate((d) => d.children.push(child));
+  await syncMutate("children", (d) => d.children.push(child), child as unknown as Record<string, unknown>);
   return child;
 }
-export function deleteChild(id: string) {
+export async function deleteChild(id: string) {
+  await deleteRow("children", id);
   mutate((d) => {
     d.children = d.children.filter((c) => c.id !== id);
     d.entries = d.entries.filter((e) => e.childId !== id);
@@ -402,47 +530,73 @@ export function deleteChild(id: string) {
 
 /* ============ Horarios ============ */
 export type BlockInput = Omit<Block, "id"> & { id?: string };
-export function saveBlock(input: BlockInput) {
+export async function saveBlock(input: BlockInput) {
   if (input.id) {
-    mutate((d) => {
-      const b = d.blocks.find((x) => x.id === input.id);
-      if (b) Object.assign(b, input);
-    });
+    const current = db.blocks.find((x) => x.id === input.id);
+    if (!current) throw new Error("No se encontró el bloque del horario.");
+    const next: Block = { ...current, ...input };
+    await syncMutate(
+      "blocks",
+      (d) => {
+        const b = d.blocks.find((x) => x.id === input.id);
+        if (b) Object.assign(b, input);
+      },
+      next as unknown as Record<string, unknown>,
+    );
   } else {
-    mutate((d) => d.blocks.push({ ...input, id: uid() }));
+    const block: Block = { ...input, id: uid() };
+    await syncMutate("blocks", (d) => d.blocks.push(block), block as unknown as Record<string, unknown>);
   }
 }
-export const deleteBlock = (id: string) =>
+export const deleteBlock = async (id: string) => {
+  await deleteRow("blocks", id);
   mutate((d) => {
     d.blocks = d.blocks.filter((b) => b.id !== id);
   });
+};
 
 /* ============ Materiales ============ */
 export type MaterialInput = Omit<Material, "id" | "createdAt" | "downloads"> & { id?: string };
-export function addMaterial(input: MaterialInput): Material {
+export async function addMaterial(input: MaterialInput): Promise<Material> {
   const m: Material = { ...input, id: uid(), downloads: 0, createdAt: new Date().toISOString() };
-  mutate((d) => d.materials.unshift(m));
+  await syncMutate("materials", (d) => d.materials.unshift(m), m as unknown as Record<string, unknown>);
   return m;
 }
-export const deleteMaterial = (id: string) =>
+export const deleteMaterial = async (id: string) => {
+  await deleteRow("materials", id);
   mutate((d) => {
     d.materials = d.materials.filter((m) => m.id !== id);
   });
-export const bumpDownload = (id: string) =>
+};
+/** Contador de descargas: optimista + respaldo en la nube (no bloquea la UI). */
+export const bumpDownload = (id: string) => {
+  let updated: Material | undefined;
   mutate((d) => {
     const m = d.materials.find((x) => x.id === id);
-    if (m) m.downloads += 1;
+    if (m) {
+      m.downloads += 1;
+      updated = m;
+    }
   });
+  if (updated) {
+    upsertRow("materials", updated as unknown as Record<string, unknown>).catch(() => {
+      /* métrica secundaria: se recuperará con la próxima escritura de la fila */
+    });
+  }
+};
 
 /* ============ Avances ============ */
 export type EntryInput = Omit<Entry, "id"> & { id?: string };
-export function addEntry(input: EntryInput) {
-  mutate((d) => d.entries.unshift({ ...input, id: uid() }));
+export async function addEntry(input: EntryInput) {
+  const entry: Entry = { ...input, id: uid() };
+  await syncMutate("entries", (d) => d.entries.unshift(entry), entry as unknown as Record<string, unknown>);
 }
-export const deleteEntry = (id: string) =>
+export const deleteEntry = async (id: string) => {
+  await deleteRow("entries", id);
   mutate((d) => {
     d.entries = d.entries.filter((e) => e.id !== id);
   });
+};
 
 /* ============ Respaldo y mantenimiento (admin) ============ */
 export function importData(text: string) {
@@ -525,100 +679,79 @@ export const visibleMaterials = (d: DBShape, groups: string[]): Material[] =>
 
 /**
  * Carga datos desde las 6 tablas de Supabase en paralelo.
- * Retorna un objeto DBShape con los datos, o null si Supabase no está
- * configurado o si alguna consulta falla (la app sigue funcionando local).
+ * Evalúa el objeto `error` de CADA consulta: si alguna falla, lanza un error
+ * descriptivo (antes devolvía `null` y la app seguía “silenciosamente” con
+ * datos locales, dando la impresión de que todo funcionaba).
  */
-export async function loadFromSupabase(): Promise<DBShape | null> {
-  if (!supabase) return null;
-  try {
-    const [groupsRes, usersRes, childrenRes, blocksRes, materialsRes, entriesRes] = await Promise.all([
-      supabase.from("groups").select("*"),
-      supabase.from("users").select("*"),
-      supabase.from("children").select("*"),
-      supabase.from("blocks").select("*"),
-      supabase.from("materials").select("*"),
-      supabase.from("entries").select("*"),
-    ]);
+export async function loadFromSupabase(): Promise<DBShape> {
+  if (!supabase) throw new Error("Supabase no está configurado.");
+  const [groupsRes, usersRes, childrenRes, blocksRes, materialsRes, entriesRes] = await Promise.all([
+    supabase.from("groups").select("*"),
+    supabase.from("users").select("*"),
+    supabase.from("children").select("*"),
+    supabase.from("blocks").select("*"),
+    supabase.from("materials").select("*"),
+    supabase.from("entries").select("*"),
+  ]);
 
-    // Verificar errores en cada consulta
-    const errors = [
-      { table: "groups", error: groupsRes.error },
-      { table: "users", error: usersRes.error },
-      { table: "children", error: childrenRes.error },
-      { table: "blocks", error: blocksRes.error },
-      { table: "materials", error: materialsRes.error },
-      { table: "entries", error: entriesRes.error },
-    ].filter((e) => e.error);
+  const failed = [
+    { table: "groups", error: groupsRes.error },
+    { table: "users", error: usersRes.error },
+    { table: "children", error: childrenRes.error },
+    { table: "blocks", error: blocksRes.error },
+    { table: "materials", error: materialsRes.error },
+    { table: "entries", error: entriesRes.error },
+  ].find((r) => r.error);
 
-    if (errors.length > 0) {
-      console.error("Errores al cargar desde Supabase:", errors);
-      return null;
-    }
-
-    return {
-      v: 4,
-      groups: groupsRes.data || [],
-      users: usersRes.data || [],
-      children: childrenRes.data || [],
-      blocks: blocksRes.data || [],
-      materials: materialsRes.data || [],
-      entries: entriesRes.data || [],
-      session: null,
-    };
-  } catch (err) {
-    console.error("Error inesperado al cargar desde Supabase:", err);
-    return null;
+  if (failed?.error) {
+    throw new Error(`Error al leer "${failed.table}" en Supabase (${failed.error.code}): ${failed.error.message}`);
   }
+
+  return {
+    v: 4,
+    groups: groupsRes.data ?? [],
+    users: usersRes.data ?? [],
+    children: childrenRes.data ?? [],
+    blocks: blocksRes.data ?? [],
+    materials: materialsRes.data ?? [],
+    entries: entriesRes.data ?? [],
+    session: null,
+  };
 }
 
 /**
- * Inserta o actualiza un registro en la tabla especificada.
- * Retorna true si éxito, false si error o si Supabase no está configurado.
+ * Aplica los datos traídos de Supabase al estado local, CONSERVANDO la
+ * sesión activa del dispositivo si el usuario sigue existiendo en la nube.
  */
-export async function saveToSupabase(table: string, data: unknown): Promise<boolean> {
-  if (!supabase) return false;
-  try {
-    const { error } = await supabase.from(table).upsert(data as object, { onConflict: "id" });
-    if (error) {
-      console.error(`Error al guardar en ${table}:`, error);
-      return false;
-    }
-    return true;
-  } catch (err) {
-    console.error(`Error inesperado al guardar en ${table}:`, err);
-    return false;
-  }
+export function applyCloudData(cloud: DBShape): void {
+  const keepSession = db.session && cloud.users.some((u) => u.id === db.session) ? db.session : null;
+  mutate((d) => {
+    d.groups = cloud.groups;
+    d.users = cloud.users;
+    d.children = cloud.children;
+    d.blocks = cloud.blocks;
+    d.materials = cloud.materials;
+    d.entries = cloud.entries;
+    d.session = keepSession;
+  });
 }
 
 /**
- * Sincroniza los datos actuales de localStorage hacia Supabase.
- * Sube tabla por tabla y maneja errores de forma tolerante.
+ * Envía TODOS los datos locales actuales a Supabase (migración/respaldo).
+ * Ahora con manejo estricto: usa upsertRow por tabla y LANZA el error real
+ * si la nube rechaza algo (RLS, esquema, red). No silencia fallos.
  */
 export async function syncLocalToSupabase(): Promise<void> {
-  if (!supabase) {
-    console.warn("Supabase no está configurado: sincronización omitida.");
-    return;
+  if (!isSupabaseConfigured) {
+    throw new Error("Supabase no está configurado: no hay nube a la que sincronizar.");
   }
-  const localDB = db;
-
-  const tables: Array<keyof Omit<DBShape, "v" | "session">> = [
-    "groups",
-    "users",
-    "children",
-    "blocks",
-    "materials",
-    "entries",
-  ];
-
+  const tables: TableName[] = ["groups", "users", "children", "blocks", "materials", "entries"];
   for (const table of tables) {
-    const records = localDB[table];
+    const records = db[table] as unknown as Record<string, unknown>[];
     if (!Array.isArray(records) || records.length === 0) continue;
-
-    const success = await saveToSupabase(table, records);
-    if (!success) {
-      console.warn(`No se pudo sincronizar la tabla ${table}`);
-    } else {
-      console.log(`Tabla ${table} sincronizada correctamente (${records.length} registros)`);
-    }
+    await upsertRows(table, records);
   }
 }
+
+// Reexport utilidades estrictas para componentes
+export { upsertRow as cloudUpsert, deleteRow as cloudDelete };

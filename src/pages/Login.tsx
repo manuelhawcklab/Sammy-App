@@ -14,14 +14,12 @@ import {
   UserPlus,
   Users,
 } from "lucide-react";
-import { isSupabaseConfigured, supabase } from "../lib/supabase";
+import { isSupabaseConfigured } from "../lib/supabase";
 import {
   allGroups,
   login as loginLocal,
   register as registerLocal,
-  mutate,
   type Role,
-  type User as DBUser,
 } from "../lib/db";
 import {
   Button,
@@ -88,51 +86,16 @@ export default function Login() {
 
     try {
       if (mode === "login") {
-        if (isSupabaseConfigured && supabase) {
-          // Autenticación contra la nube (tabla users de Supabase)
-          const { data, error } = await supabase
-            .from("users")
-            .select("*")
-            .eq("email", email.trim().toLowerCase())
-            .single();
-
-          if (error || !data) {
-            toast("error", "Correo o contraseña incorrectos.");
-            return;
-          }
-          const user = data as DBUser;
-          if (user.pass !== pass) {
-            toast("error", "Correo o contraseña incorrectos.");
-            return;
-          }
-
-          // Actualizar sesión usando mutate() - esto dispara el evento de actualización
-          mutate((d) => {
-            d.session = user.id;
-            // Asegurar que el usuario esté en la lista local
-            if (!d.users.some((u) => u.id === user.id)) {
-              d.users.push(user);
-            } else {
-              // Actualizar usuario existente
-              const idx = d.users.findIndex((u) => u.id === user.id);
-              d.users[idx] = user;
-            }
-          });
-        } else {
-          // Sin Supabase configurado: autenticación local en el dispositivo
-          loginLocal(email, pass);
-        }
-        toast("success", `¡Hola de nuevo!`);
+        // login() es estricto: con Supabase configurado valida credenciales
+        // contra la nube (await + error evaluado) y solo entonces abre sesión.
+        await loginLocal(email, pass);
+        toast("success", "¡Hola de nuevo!");
       } else {
-        // Registro: crear cuenta y abrir sesión
-        const normalizedEmail = email.trim().toLowerCase();
-        const u = registerLocal({ role, name, email: normalizedEmail, pass, group });
-
-        if (isSupabaseConfigured && supabase) {
-          // Espejar la cuenta en la nube (sin bloquear si falla)
-          const { error } = await supabase.from("users").upsert(u as object, { onConflict: "id" });
-          if (error) console.warn("No se pudo registrar el usuario en Supabase:", error.message);
-        }
+        // Registro estricto (write-through): register() confirma la cuenta en
+        // Supabase ANTES de tocar el estado local. Si la nube rechaza la
+        // operación (RLS, esquema, red), lanza el error real y aquí se muestra
+        // el mensaje al usuario — sin confeti, sin sesión, sin éxito falso.
+        const u = await registerLocal({ role, name, email: normalizedEmail, pass, group });
 
         confetti({
           particleCount: 140,
@@ -140,7 +103,12 @@ export default function Login() {
           origin: { y: 0.35 },
           colors: ["#12A59B", "#FFC24B", "#FF6F61", "#58B8E8", "#7DC95E"],
         });
-        toast("success", `¡Cuenta creada! Bienvenid@, ${u.name.split(" ")[0]}.`);
+        toast(
+          "success",
+          isSupabaseConfigured
+            ? `¡Cuenta creada y sincronizada! Bienvenid@, ${u.name.split(" ")[0]}.`
+            : `¡Cuenta creada! Bienvenid@, ${u.name.split(" ")[0]}.`,
+        );
       }
     } catch (err) {
       toast("error", err instanceof Error ? err.message : "Algo salió mal.");
