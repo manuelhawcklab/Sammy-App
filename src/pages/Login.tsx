@@ -14,8 +14,15 @@ import {
   UserPlus,
   Users,
 } from "lucide-react";
-import { supabase } from "../lib/supabase";
-import { allGroups, register as registerLocal, mutate, type Role, type User as DBUser } from "../lib/db";
+import { isSupabaseConfigured, supabase } from "../lib/supabase";
+import {
+  allGroups,
+  login as loginLocal,
+  register as registerLocal,
+  mutate,
+  type Role,
+  type User as DBUser,
+} from "../lib/db";
 import {
   Button,
   Field,
@@ -78,46 +85,55 @@ export default function Login() {
     ev.preventDefault();
     if (!validate()) return;
     setLoading(true);
-    
+
     try {
       if (mode === "login") {
-        // Consultar Supabase para autenticación
-        const { data, error } = await supabase
-          .from("users")
-          .select("*")
-          .eq("email", email)
-          .eq("pass", pass)
-          .single();
-        
-        if (error || !data) {
-          toast("error", "Correo o contraseña incorrectos");
-          setLoading(false);
-          return;
-        }
-        
-        // Actualizar sesión usando mutate() - esto dispara el evento de actualización
-        const user: DBUser = data as DBUser;
-        mutate((d) => {
-          d.session = user.id;
-          // Asegurar que el usuario esté en la lista local
-          if (!d.users.some((u) => u.id === user.id)) {
-            d.users.push(user);
-          } else {
-            // Actualizar usuario existente
-            const idx = d.users.findIndex((u) => u.id === user.id);
-            d.users[idx] = user;
+        if (isSupabaseConfigured && supabase) {
+          // Autenticación contra la nube (tabla users de Supabase)
+          const { data, error } = await supabase
+            .from("users")
+            .select("*")
+            .eq("email", email.trim().toLowerCase())
+            .single();
+
+          if (error || !data) {
+            toast("error", "Correo o contraseña incorrectos.");
+            return;
           }
-        });
-        
-        toast("success", `¡Hola de nuevo, ${user.name.split(" ")[0]}!`);
-        
-        // Redirigir al dashboard después de un breve delay
-        setTimeout(() => {
-          window.location.href = "/";
-        }, 800);
+          const user = data as DBUser;
+          if (user.pass !== pass) {
+            toast("error", "Correo o contraseña incorrectos.");
+            return;
+          }
+
+          // Actualizar sesión usando mutate() - esto dispara el evento de actualización
+          mutate((d) => {
+            d.session = user.id;
+            // Asegurar que el usuario esté en la lista local
+            if (!d.users.some((u) => u.id === user.id)) {
+              d.users.push(user);
+            } else {
+              // Actualizar usuario existente
+              const idx = d.users.findIndex((u) => u.id === user.id);
+              d.users[idx] = user;
+            }
+          });
+        } else {
+          // Sin Supabase configurado: autenticación local en el dispositivo
+          loginLocal(email, pass);
+        }
+        toast("success", `¡Hola de nuevo!`);
       } else {
-        // Registro: mantener lógica local por ahora
-        const u = registerLocal({ role, name, email, pass, group });
+        // Registro: crear cuenta y abrir sesión
+        const normalizedEmail = email.trim().toLowerCase();
+        const u = registerLocal({ role, name, email: normalizedEmail, pass, group });
+
+        if (isSupabaseConfigured && supabase) {
+          // Espejar la cuenta en la nube (sin bloquear si falla)
+          const { error } = await supabase.from("users").upsert(u as object, { onConflict: "id" });
+          if (error) console.warn("No se pudo registrar el usuario en Supabase:", error.message);
+        }
+
         confetti({
           particleCount: 140,
           spread: 75,

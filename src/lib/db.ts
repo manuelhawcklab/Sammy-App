@@ -161,151 +161,27 @@ export const AVATAR_COLORS = [
 /* ============ Store (localStorage) ============ */
 const KEY = "sammy_db_v4";
 
-const uid = () =>
+export const uid = () =>
   typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
     : Math.random().toString(36).slice(2) + Date.now().toString(36);
 
-function seed(): DBShape {
-  const now = new Date().toISOString();
-  const daysAgo = (n: number, h = 10) =>
-    new Date(Date.now() - n * 86400000 - h * 3600000).toISOString();
-
-  const groups: Group[] = DEFAULT_GROUPS.map((g) => ({ ...g }));
-
-  const users: User[] = [
-    { id: "u-admin", role: "admin", name: "Dirección Sammy", email: "admin@sammy.app", pass: "sammy123", color: "#FF6F61", createdAt: now },
-    { id: "u-val", role: "parent", name: "Valentina Rojas", email: "familia@sammy.app", pass: "sammy123", color: "#F2789F", createdAt: now },
-    { id: "u-marcos", role: "parent", name: "Marcos Herrera", email: "marcos@sammy.app", pass: "sammy123", color: "#58B8E8", createdAt: now },
-    { id: "u-caro", role: "educator", name: "Miss Carolina", email: "miss@sammy.app", pass: "sammy123", group: "abejitas", color: "#12A59B", createdAt: now },
-    { id: "u-andres", role: "educator", name: "Profe Andrés", email: "andres@sammy.app", pass: "sammy123", group: "colibries", color: "#FFC24B", createdAt: now },
-  ];
-
-  const children: Child[] = [
-    {
-      id: "c-lucas", parentId: "u-val", name: "Lucas Rojas", birth: "2021-05-14",
-      group: "abejitas", emoji: "🦖", color: "#7DC95E", allergies: [],
-      notes: "Le encanta armar bloques y los dinosaurios. Se adapta rápido a las rutinas nuevas.",
-      authorized: "Valentina Rojas (mamá) · Pedro Rojas (papá)", createdAt: daysAgo(60),
-    },
-    {
-      id: "c-emma", parentId: "u-val", name: "Emma Rojas", birth: "2022-11-02",
-      group: "colibries", emoji: "🐰", color: "#F2789F", allergies: ["Lactosa"],
-      notes: "Muy sociable. Prefiere leche vegetal en el refrigerio.",
-      authorized: "Valentina Rojas (mamá) · Abuela Rosa", createdAt: daysAgo(45),
-    },
-    {
-      id: "c-bruno", parentId: "u-marcos", name: "Bruno Herrera", birth: "2021-08-23",
-      group: "abejitas", emoji: "🦊", color: "#FFC24B", allergies: ["Maní"],
-      notes: "Alergia severa al maní. EpiPen disponible en enfermería.",
-      authorized: "Marcos Herrera (papá) · Tía Julia", createdAt: daysAgo(50),
-    },
-  ];
-
-  const blocks: Block[] = [];
-  const talleres = [
-    "Taller de arte",
-    "Taller de lógica",
-    "Taller de lenguaje",
-    "Exploradores de la naturaleza",
-    "Música y movimiento",
-  ];
-  for (let day = 1; day <= 5; day++) {
-    const abe: [string, string, BlockKind, string][] = [
-      ["08:00", "08:30", "bienvenida", "Bienvenida y saludo"],
-      ["08:30", "09:15", "clase", "Asamblea de la mañana"],
-      ["09:15", "09:45", "comida", "Refrigerio"],
-      ["09:45", "10:45", "taller", talleres[day - 1]],
-      ["10:45", "11:30", "juego", "Juego al aire libre"],
-      ["11:30", "12:15", "comida", "Almuerzo"],
-      ["12:15", "13:00", "siesta", "Descanso y siesta"],
-      ["13:00", "13:45", "clase", "Cuentos y rincón de lectura"],
-      ["13:45", "14:00", "salida", "Despedida"],
-    ];
-    abe.forEach(([start, end, kind, title]) =>
-      blocks.push({ id: uid(), group: "abejitas", day, start, end, kind, title })
-    );
-    const col: [string, string, BlockKind, string][] = [
-      ["08:30", "09:00", "bienvenida", "Bienvenida con canciones"],
-      ["09:00", "09:40", "juego", "Juego sensorial"],
-      ["09:40", "10:10", "comida", "Refrigerio"],
-      ["10:10", "10:50", "taller", talleres[day - 1]],
-      ["10:50", "11:30", "juego", "Patio y movimiento"],
-      ["11:30", "12:00", "clase", "Cuentos cortos"],
-      ["12:00", "12:15", "salida", "Despedida"],
-    ];
-    col.forEach(([start, end, kind, title]) =>
-      blocks.push({ id: uid(), group: "colibries", day, start, end, kind, title })
-    );
-  }
-
-  const txt = (t: string) => "text/plain;charset=utf-8," + encodeURIComponent(t);
-  const materials: Material[] = [
-    {
-      id: "m1", authorId: "u-caro", title: "Rutinas de sueño para peques de 3 a 5 años",
-      desc: "Guía práctica con pasos para lograr una rutina de sueño tranquila: anticipación, baño, cuento y despedida corta.",
-      category: "Guías", scope: "all", fileName: "rutinas-de-sueno.txt",
-      size: 480, dataUrl: txt("RUTINAS DE SUEÑO (3–5 años)\n\n1. Anticipa: avisa 15 minutos antes de ir a la cama.\n2. Orden estable: baño → pijama → cuento → luz apagada.\n3. Un solo cuento, elegido antes de acostarse.\n4. Despedida corta y tranquila: sin pantallas 1 hora antes.\n5. Si se despierta, acompáñalo con voz baja y vuelve a la rutina.\n\nCon cariño, Miss Carolina 🐝"),
-      downloads: 34, createdAt: daysAgo(2),
-    },
-    {
-      id: "m2", authorId: "u-caro", title: "Fichas de trazos: letras curvas",
-      desc: "6 fichas imprimibles para practicar las curvas de la c, o, s y g con crayón grueso.",
-      category: "Fichas", scope: "all", fileName: "fichas-trazos.txt",
-      size: 320, dataUrl: txt("FICHAS DE TRAZOS — LETRAS CURVAS\n\nImprime y entrega un crayón grueso.\nHoja 1: curva de la C (grande → pequeña)\nHoja 2: círculo de la O (sentido antihorario)\nHoja 3: serpiente de la S\nHoja 4: gancho de la G\nConsejo: 10 minutos al día es suficiente."),
-      downloads: 21, createdAt: daysAgo(4),
-    },
-    {
-      id: "m3", authorId: "u-caro", title: "Cancionero de la asamblea (semana 12)",
-      desc: "Las 5 canciones que cantamos esta semana en la asamblea, con letra para cantar en casa.",
-      category: "Canciones", scope: "all", fileName: "cancionero-semana-12.txt",
-      size: 410, dataUrl: txt("CANCIONERO — SEMANA 12\n\n1. Buenos días, amiguitos\n2. La araña pequeñita\n3. Cabeza, hombros, rodillas y pies\n4. El cocodrilo Dante\n5. Estrellita, ¿dónde estás?\n\nTip: cántenlas con señas, ¡a ellos les encanta!"),
-      downloads: 18, createdAt: daysAgo(6),
-    },
-    {
-      id: "m4", authorId: "u-andres", title: "Botella sensorial del océano: paso a paso",
-      desc: "Actividad en casa para crear una botella sensorial con agua, escarcha y animalitos. Calma y concentra.",
-      category: "Actividades", scope: "all", fileName: "botella-sensorial.txt",
-      size: 390, dataUrl: txt("BOTELLA SENSORIAL DEL OCÉANO\n\nMateriales: botella transparente, agua tibia, pegamento transparente, escarcha azul, figuritas marinas.\n\n1. Llena 3/4 de la botella con agua tibia.\n2. Agrega 2 cucharadas de pegamento transparente.\n3. Añade escarcha y figuritas.\n4. Sella la tapa con pegamento caliente (adulto).\n5. ¡A girar y respirar profundo!"),
-      downloads: 27, createdAt: daysAgo(8),
-    },
-    {
-      id: "m5", authorId: "u-caro", title: "Calendario de emociones para imprimir",
-      desc: "Calendario mensual para que los peques marquen cómo se sintieron cada día. Solo para la sala.",
-      category: "Fichas", scope: "abejitas", fileName: "calendario-emociones.txt",
-      size: 280, dataUrl: txt("CALENDARIO DE EMOCIONES\n\nCada noche, tu peque colorea la carita del día:\n😊 feliz · 😢 triste · 😠 enojado · 😨 con miedo · 😴 cansado\n\nAl final del mes conversen: ¿qué día fue su favorito? ¿por qué?"),
-      downloads: 12, createdAt: daysAgo(3),
-    },
-    {
-      id: "m6", authorId: "u-andres", title: "Video: yoga para niños (5 minutos)",
-      desc: "Sesión corta de yoga con posturas de animales, perfecta para después del jardín.",
-      category: "Videos", scope: "all",
-      url: "https://www.youtube.com/watch?v=X655B4ISakg",
-      downloads: 41, createdAt: daysAgo(10),
-    },
-  ];
-
-  const e = (childId: string, authorId: string, area: Area, stars: number, note: string, n: number): Entry => ({
-    id: uid(), childId, authorId, area, stars, note, date: daysAgo(n),
-  });
-  const entries: Entry[] = [
-    e("c-lucas", "u-caro", "Lenguaje", 4, "Armó frases completas para contar su fin de semana frente al grupo.", 2),
-    e("c-bruno", "u-caro", "Lógica", 4, "Completó el rompecabezas de 12 piezas sin ayuda.", 1),
-    e("c-emma", "u-andres", "Socioemocional", 4, "Se calmó solito usando la botella sensorial después del recreo.", 3),
-    e("c-lucas", "u-caro", "Lógica", 3, "Clasificó formas y colores; aún le cuesta completar la serie de 4.", 4),
-    e("c-bruno", "u-caro", "Arte", 5, "Creó su propio cuento dibujado de 4 páginas. ¡Increíble imaginación!", 5),
-    e("c-lucas", "u-caro", "Motricidad gruesa", 5, "Saltó en un pie sin perder el equilibrio, 10 segundos seguidos.", 6),
-    e("c-emma", "u-andres", "Motricidad fina", 3, "Apiló una torre de 8 cubos con pinza fina estable.", 7),
-    e("c-bruno", "u-caro", "Socioemocional", 3, "Está aprendiendo a esperar turnos; hoy lo logró 2 veces.", 8),
-    e("c-lucas", "u-caro", "Socioemocional", 4, "Compartió sus bloques favoritos y ayudó a Bruno a construir.", 9),
-    e("c-emma", "u-andres", "Lenguaje", 4, "Dice oraciones de 3 palabras y canta la canción de la araña.", 11),
-    e("c-lucas", "u-caro", "Arte", 4, "Pintó con témpera usando trazos firmes y eligió su paleta.", 12),
-    e("c-emma", "u-andres", "Motricidad gruesa", 4, "Sube la escalera alternando los pies, agarrándose poco.", 15),
-    e("c-lucas", "u-caro", "Motricidad fina", 3, "Recortó siguiendo líneas rectas con apoyo de la mano.", 16),
-    e("c-lucas", "u-caro", "Lenguaje", 3, "Reconoce las vocales de su nombre en el cartel del aula.", 20),
-  ];
-
-  return { v: 4, groups, users, children, blocks, materials, entries, session: null };
+/**
+ * Estado inicial de la plataforma: completamente vacío.
+ * Ya no existen datos de demostración; toda la información
+ * (usuarios, niños, horarios, materiales y avances) se crea desde la app.
+ */
+function emptyDB(): DBShape {
+  return {
+    v: 4,
+    groups: DEFAULT_GROUPS.map((g) => ({ ...g })),
+    users: [],
+    children: [],
+    blocks: [],
+    materials: [],
+    entries: [],
+    session: null,
+  };
 }
 
 function load(): DBShape {
@@ -314,15 +190,48 @@ function load(): DBShape {
     if (raw) {
       const parsed = JSON.parse(raw) as DBShape;
       if (parsed && parsed.v === 4 && Array.isArray(parsed.users)) {
+        // Migración: se eliminan los antiguos datos de demostración.
+        const demoIds = new Set([
+          "u-admin", "u-val", "u-marcos", "u-caro", "u-andres",
+          "c-lucas", "c-emma", "c-bruno",
+          "m1", "m2", "m3", "m4", "m5", "m6",
+        ]);
+        const hadDemo =
+          parsed.users.some((u) => demoIds.has(u.id)) ||
+          parsed.children.some((c) => demoIds.has(c.id)) ||
+          parsed.materials.some((m) => demoIds.has(m.id));
+        if (hadDemo) {
+          parsed.users = parsed.users.filter(
+            (u) => !demoIds.has(u.id) && !/@sammy\.app$/i.test(u.email)
+          );
+          parsed.children = parsed.children.filter((c) => !demoIds.has(c.id));
+          parsed.materials = parsed.materials.filter((m) => !demoIds.has(m.id));
+          const childIds = new Set(parsed.children.map((c) => c.id));
+          const userIds = new Set(parsed.users.map((u) => u.id));
+          parsed.entries = (parsed.entries ?? []).filter(
+            (e) => childIds.has(e.childId) && userIds.has(e.authorId)
+          );
+          parsed.blocks = [];
+          if (parsed.session && !userIds.has(parsed.session)) parsed.session = null;
+          parsed.groups =
+            Array.isArray(parsed.groups) && parsed.groups.length > 0
+              ? parsed.groups
+              : DEFAULT_GROUPS.map((g) => ({ ...g }));
+          persist(parsed);
+          return parsed;
+        }
         if (!Array.isArray(parsed.groups) || parsed.groups.length === 0)
           parsed.groups = DEFAULT_GROUPS.map((g) => ({ ...g }));
+        parsed.entries = parsed.entries ?? [];
+        parsed.blocks = parsed.blocks ?? [];
+        parsed.materials = parsed.materials ?? [];
         return parsed;
       }
     }
   } catch {
-    /* datos corruptos → re-sembrar */
+    /* datos corruptos → reiniciar */
   }
-  const fresh = seed();
+  const fresh = emptyDB();
   try {
     localStorage.setItem(KEY, JSON.stringify(fresh));
   } catch {
@@ -331,16 +240,17 @@ function load(): DBShape {
   return fresh;
 }
 
+function persist(state?: DBShape): void {
+  try {
+    localStorage.setItem(KEY, JSON.stringify(state ?? db));
+  } catch {
+    if (state) throw new Error("No hay espacio suficiente en este dispositivo para guardar.");
+  }
+}
+
 let db: DBShape = load();
 const subs = new Set<() => void>();
 const emit = () => subs.forEach((f) => f());
-const persist = () => {
-  try {
-    localStorage.setItem(KEY, JSON.stringify(db));
-  } catch {
-    throw new Error("No hay espacio suficiente en este dispositivo para guardar.");
-  }
-};
 
 export function mutate(fn: (d: DBShape) => void) {
   const next = JSON.parse(JSON.stringify(db)) as DBShape;
@@ -546,7 +456,7 @@ export function importData(text: string) {
   emit();
 }
 export function resetData() {
-  db = seed();
+  db = emptyDB();
   persist();
   emit();
 }
@@ -615,9 +525,11 @@ export const visibleMaterials = (d: DBShape, groups: string[]): Material[] =>
 
 /**
  * Carga datos desde las 6 tablas de Supabase en paralelo.
- * Retorna un objeto DBShape con los datos o null si hay error.
+ * Retorna un objeto DBShape con los datos, o null si Supabase no está
+ * configurado o si alguna consulta falla (la app sigue funcionando local).
  */
 export async function loadFromSupabase(): Promise<DBShape | null> {
+  if (!supabase) return null;
   try {
     const [groupsRes, usersRes, childrenRes, blocksRes, materialsRes, entriesRes] = await Promise.all([
       supabase.from("groups").select("*"),
@@ -661,11 +573,12 @@ export async function loadFromSupabase(): Promise<DBShape | null> {
 
 /**
  * Inserta o actualiza un registro en la tabla especificada.
- * Retorna true si éxito, false si error.
+ * Retorna true si éxito, false si error o si Supabase no está configurado.
  */
-export async function saveToSupabase(table: string, data: any): Promise<boolean> {
+export async function saveToSupabase(table: string, data: unknown): Promise<boolean> {
+  if (!supabase) return false;
   try {
-    const { error } = await supabase.from(table).upsert(data, { onConflict: "id" });
+    const { error } = await supabase.from(table).upsert(data as object, { onConflict: "id" });
     if (error) {
       console.error(`Error al guardar en ${table}:`, error);
       return false;
@@ -679,11 +592,15 @@ export async function saveToSupabase(table: string, data: any): Promise<boolean>
 
 /**
  * Sincroniza los datos actuales de localStorage hacia Supabase.
- * Sube tabla por tabla y maneja errores gracefully.
+ * Sube tabla por tabla y maneja errores de forma tolerante.
  */
 export async function syncLocalToSupabase(): Promise<void> {
+  if (!supabase) {
+    console.warn("Supabase no está configurado: sincronización omitida.");
+    return;
+  }
   const localDB = db;
-  
+
   const tables: Array<keyof Omit<DBShape, "v" | "session">> = [
     "groups",
     "users",

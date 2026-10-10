@@ -21,6 +21,7 @@ import { currentUser, groupById, logout, useDB } from "./lib/db";
 import type { Role, User } from "./lib/db";
 import { useInstall } from "./lib/pwa";
 import { useSupabaseDB } from "./lib/useSupabaseDB";
+import { isSupabaseConfigured } from "./lib/supabase";
 import { Avatar, Chip, SammyImg, ToastProvider, useToast } from "./components/ui";
 import Login from "./pages/Login";
 import HomePage from "./pages/Home";
@@ -292,32 +293,29 @@ function Shell({ me }: { me: User }) {
 function Root() {
   const db = useDB();
   const me = currentUser(db);
-  const { db: supabaseDb, loading, error } = useSupabaseDB();
+  const { loading, error } = useSupabaseDB();
 
-  // Banner de estado de conexión a Supabase
-  const connectionBanner = (() => {
+  // Banner discreto de estado de la nube (solo si Supabase está configurado)
+  const connectionBanner = !isSupabaseConfigured ? null : (() => {
     if (loading) {
       return (
-        <div className="fixed top-0 left-0 right-0 z-50 bg-blue-500 text-white text-center py-2 text-sm font-semibold">
-          🔄 Conectando a la nube...
+        <div className="fixed bottom-2 left-1/2 z-50 -translate-x-1/2 rounded-full bg-blue-600/90 px-4 py-1.5 text-center text-xs font-semibold text-white shadow-lg">
+          🔄 Conectando a la nube…
         </div>
       );
     }
     if (error) {
       return (
-        <div className="fixed top-0 left-0 right-0 z-50 bg-red-500 text-white text-center py-2 text-sm font-semibold">
-          ❌ Error de conexión: {error}
+        <div className="fixed bottom-2 left-1/2 z-50 -translate-x-1/2 rounded-full bg-red-600/90 px-4 py-1.5 text-center text-xs font-semibold text-white shadow-lg">
+          ⚠️ Sin conexión a la nube: trabajando en modo local
         </div>
       );
     }
-    if (supabaseDb) {
-      return (
-        <div className="fixed top-0 left-0 right-0 z-50 bg-green-500 text-white text-center py-2 text-sm font-semibold">
-          ✅ Conectado a Supabase | Grupos: {supabaseDb.groups.length} | Usuarios: {supabaseDb.users.length}
-        </div>
-      );
-    }
-    return null;
+    return (
+      <div className="fixed bottom-2 left-1/2 z-50 -translate-x-1/2 rounded-full bg-emerald-600/90 px-4 py-1.5 text-center text-xs font-semibold text-white shadow-lg">
+        ✅ Sincronizado con la nube
+      </div>
+    );
   })();
 
   if (!me) return <Login />;
