@@ -7,7 +7,7 @@ import {
   Smartphone,
   Upload,
 } from "lucide-react";
-import { importData, resetData, storageKB, useDB } from "../../lib/db";
+import { importData, resetData, storageKB, syncLocalToSupabase, useDB } from "../../lib/db";
 import { useInstall } from "../../lib/pwa";
 import { Button, Chip, Modal, Reveal, SectionHead, useToast } from "../../components/ui";
 
@@ -17,8 +17,21 @@ export default function SettingsPage() {
   const { canInstall, installed, promptInstall } = useInstall();
   const fileRef = useRef<HTMLInputElement>(null);
   const [resetOpen, setResetOpen] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const kb = storageKB();
   const pct = Math.min((kb / 4096) * 100, 100);
+
+  const syncNow = async () => {
+    setSyncing(true);
+    try {
+      await syncLocalToSupabase();
+      toast("success", "Datos sincronizados con Supabase ☁️");
+    } catch (err) {
+      toast("error", err instanceof Error ? err.message : "No se pudo sincronizar con Supabase.");
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   const exportJSON = () => {
     const blob = new Blob([JSON.stringify(db, null, 2)], { type: "application/json" });
@@ -116,6 +129,14 @@ export default function SettingsPage() {
               />
               <Button variant="ghost" icon={<Upload size={16} />} onClick={() => fileRef.current?.click()}>
                 Importar respaldo
+              </Button>
+              <Button
+                variant="ghost"
+                icon={<RefreshCw size={16} className={syncing ? "animate-spin" : ""} />}
+                onClick={syncNow}
+                disabled={syncing}
+              >
+                {syncing ? "Sincronizando…" : "Sincronizar con Supabase ☁️"}
               </Button>
             </div>
             <p className="mt-auto pt-4 text-[11px] font-bold text-ink/40">

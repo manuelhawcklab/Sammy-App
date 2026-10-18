@@ -15,7 +15,15 @@ import {
   Users,
 } from "lucide-react";
 import { supabase } from "../lib/supabase";
-import { allGroups, register as registerLocal, mutate, type Role, type User as DBUser } from "../lib/db";
+import {
+  allGroups,
+  dbSnapshot,
+  mutate,
+  register as registerLocal,
+  saveToSupabase,
+  type Role,
+  type User as DBUser,
+} from "../lib/db";
 import {
   Button,
   Field,
@@ -81,43 +89,61 @@ export default function Login() {
     
     try {
       if (mode === "login") {
-        // Consultar Supabase para autenticación
+        // 1) Intentar autenticación contra Supabase (producción)
         const { data, error } = await supabase
           .from("users")
           .select("*")
-          .eq("email", email)
+          .eq("email", email.trim().toLowerCase())
           .eq("pass", pass)
-          .single();
-        
-        if (error || !data) {
+          .maybeSingle();
+
+        let user: DBUser | null = error ? null : (data as DBUser | null);
+
+        // 2) Respaldo local: si la nube falla o no encuentra al usuario,
+        //    se intenta con el store local para que la app nunca se bloquee.
+        if (!user) {
+          const local = dbSnapshot().users.find(
+            (u) => u.email === email.trim().toLowerCase() && u.pass === pass
+          );
+          if (local) user = local;
+        }
+
+        if (!user) {
           toast("error", "Correo o contraseña incorrectos");
           setLoading(false);
           return;
         }
-        
+
         // Actualizar sesión usando mutate() - esto dispara el evento de actualización
-        const user: DBUser = data as DBUser;
         mutate((d) => {
-          d.session = user.id;
+          d.session = user!.id;
           // Asegurar que el usuario esté en la lista local
-          if (!d.users.some((u) => u.id === user.id)) {
-            d.users.push(user);
+          if (!d.users.some((u) => u.id === user!.id)) {
+            d.users.push(user!);
           } else {
             // Actualizar usuario existente
-            const idx = d.users.findIndex((u) => u.id === user.id);
-            d.users[idx] = user;
+            const idx = d.users.findIndex((u) => u.id === user!.id);
+            d.users[idx] = user!;
           }
         });
-        
+
+        // Sincronizar el usuario hacia la nube (mejor esfuerzo, no bloquea el login)
+        void saveToSupabase("users", user);
+
         toast("success", `¡Hola de nuevo, ${user.name.split(" ")[0]}!`);
-        
+
         // Redirigir al dashboard después de un breve delay
         setTimeout(() => {
           window.location.href = "/";
         }, 800);
       } else {
-        // Registro: mantener lógica local por ahora
+        // Registro: crear cuenta en el store local…
         const u = registerLocal({ role, name, email, pass, group });
+
+        // …y subir la cuenta a Supabase (mejor esfuerzo; si la tabla aún
+        // no existe o hay error de RLS, la cuenta queda disponible localmente)
+        void saveToSupabase("users", u);
+
         confetti({
           particleCount: 140,
           spread: 75,

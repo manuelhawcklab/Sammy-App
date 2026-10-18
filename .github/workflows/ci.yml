@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    name: Typecheck & Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Sammy-App-main
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: Sammy-App-main/package-lock.json
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Verificación de tipos (tsc --noEmit)
+        run: npm run typecheck
+
+      - name: Build de producción
+        run: npm run build
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          VITE_SUPABASE_REST_URL: ${{ secrets.VITE_SUPABASE_REST_URL }}
+
+      - name: Subir artefacto dist/
+        uses: actions/upload-artifact@v4
+        with:
+          name: sammy-dist
+          path: Sammy-App-main/dist
+          retention-days: 7
