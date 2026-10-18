@@ -362,6 +362,9 @@ export function useDB(): DBShape {
   );
 }
 
+/** Lectura puntual del estado actual (fuera de React), útil en handlers async. */
+export const dbSnapshot = (): DBShape => db;
+
 /* ============ Auth ============ */
 export function register(data: { role: Role; name: string; email: string; pass: string; group?: string }): User {
   const email = data.email.trim().toLowerCase();

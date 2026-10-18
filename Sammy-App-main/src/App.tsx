@@ -17,7 +17,7 @@ import {
   TrendingUp,
   Users,
 } from "lucide-react";
-import { currentUser, groupById, logout, useDB } from "./lib/db";
+import { currentUser, groupById, logout, saveToSupabase, useDB } from "./lib/db";
 import type { Role, User } from "./lib/db";
 import { useInstall } from "./lib/pwa";
 import { useSupabaseDB } from "./lib/useSupabaseDB";
@@ -294,7 +294,8 @@ function Root() {
   const me = currentUser(db);
   const { db: supabaseDb, loading, error } = useSupabaseDB();
 
-  // Banner de estado de conexión a Supabase
+  // Banner de estado de conexión a Supabase (informativo; la app
+  // funciona siempre con el store local aunque la nube falle)
   const connectionBanner = (() => {
     if (loading) {
       return (
@@ -306,7 +307,7 @@ function Root() {
     if (error) {
       return (
         <div className="fixed top-0 left-0 right-0 z-50 bg-red-500 text-white text-center py-2 text-sm font-semibold">
-          ❌ Error de conexión: {error}
+          ❌ Error de conexión: {error} — los cambios se guardan localmente
         </div>
       );
     }
