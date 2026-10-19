@@ -1,5 +1,7 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
+  Cloud,
+  CloudOff,
   Database,
   Download,
   RefreshCw,
@@ -7,7 +9,16 @@ import {
   Smartphone,
   Upload,
 } from "lucide-react";
-import { importData, resetData, storageKB, syncLocalToSupabase, useDB } from "../../lib/db";
+import {
+  DIRECTOR_EMAIL,
+  importData,
+  resetData,
+  storageKB,
+  syncLocalToSupabase,
+  useDB,
+  type SyncReport,
+} from "../../lib/db";
+import { pingSupabase, SUPABASE_URL, supabaseConfigError } from "../../lib/supabase";
 import { useInstall } from "../../lib/pwa";
 import { Button, Chip, Modal, Reveal, SectionHead, useToast } from "../../components/ui";
 
@@ -18,14 +29,40 @@ export default function SettingsPage() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [resetOpen, setResetOpen] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [cloud, setCloud] = useState<{ ok: boolean; detail: string } | null>(null);
+  const [report, setReport] = useState<SyncReport | null>(null);
   const kb = storageKB();
   const pct = Math.min((kb / 4096) * 100, 100);
 
+  useEffect(() => {
+    let alive = true;
+    if (supabaseConfigError) {
+      setCloud({ ok: false, detail: supabaseConfigError });
+      return;
+    }
+    void pingSupabase().then((r) => {
+      if (alive) setCloud(r);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   const syncNow = async () => {
     setSyncing(true);
+    setReport(null);
     try {
-      await syncLocalToSupabase();
-      toast("success", "Datos sincronizados con Supabase ☁️");
+      const r = await syncLocalToSupabase();
+      setReport(r);
+      if (r.ok && r.uploaded > 0) {
+        toast("success", `${r.uploaded} registros sincronizados con Supabase ☁️`);
+      } else if (r.failedTables > 0) {
+        toast("error", "Algunas tablas no se pudieron sincronizar. Revisa el detalle.");
+      } else {
+        toast("info", "No hay datos locales para sincronizar todavía.");
+      }
+      const c = await pingSupabase();
+      setCloud(c);
     } catch (err) {
       toast("error", err instanceof Error ? err.message : "No se pudo sincronizar con Supabase.");
     } finally {
@@ -141,6 +178,56 @@ export default function SettingsPage() {
             </div>
             <p className="mt-auto pt-4 text-[11px] font-bold text-ink/40">
               Al importar, los datos actuales se reemplazan por completo.
+            </p>
+          </section>
+        </Reveal>
+
+        {/* ===== Estado de la conexión con Supabase ===== */}
+        <Reveal delay={100}>
+          <section className="card flex h-full flex-col p-5">
+            <h3 className="flex items-center gap-2 font-display text-lg font-semibold">
+              {cloud?.ok ? (
+                <Cloud size={19} className="text-sea" />
+              ) : (
+                <CloudOff size={19} className="text-coral" />
+              )}{" "}
+              Conexión con la nube
+            </h3>
+            <div
+              className={`mt-3 rounded-xl border-2 px-3.5 py-3 text-[13px] font-bold ${
+                cloud?.ok
+                  ? "border-sea/40 bg-sea/10 text-seadeep"
+                  : "border-coral/40 bg-coral/10 text-coraldeep"
+              }`}
+            >
+              {cloud === null
+                ? "Comprobando…"
+                : cloud.ok
+                  ? "✓ Supabase responde correctamente."
+                  : `✗ ${cloud.detail}`}
+            </div>
+            <p className="mt-2 text-[12px] font-semibold text-ink/50 break-all">
+              Proyecto: {SUPABASE_URL}
+            </p>
+            {report && (
+              <ul className="mt-3 space-y-1 rounded-xl border-2 border-ink/10 bg-paper p-3 text-[12px] font-bold text-ink/70">
+                {report.details.map((d) => (
+                  <li key={d}>{d}</li>
+                ))}
+              </ul>
+            )}
+            <div className="mt-4">
+              <Button
+                variant="ghost"
+                icon={<RefreshCw size={16} className={syncing ? "animate-spin" : ""} />}
+                onClick={syncNow}
+                disabled={syncing}
+              >
+                {syncing ? "Sincronizando…" : "Subir datos locales a Supabase ☁️"}
+              </Button>
+            </div>
+            <p className="mt-auto pt-4 text-[11px] font-bold text-ink/40">
+              Cuenta de dirección: {DIRECTOR_EMAIL} (rol Dirección · acceso total).
             </p>
           </section>
         </Reveal>
