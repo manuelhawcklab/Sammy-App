@@ -1,13 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RealtimeChannel, RealtimePostgresChangesPayload } from "@supabase/supabase-js";
-import { DBShape, loadFromSupabase } from "./db";
+import { loadFromSupabase, type DBShape } from "./db";
+import { supabaseConfigError } from "./supabase";
 import { supabase } from "./supabase";
 
 const TABLES = ["groups", "users", "children", "blocks", "materials", "entries"] as const;
 
+export interface SupabaseStatus {
+  connected: boolean;
+  checkedAt: number | null;
+  detail: string;
+}
+
 /**
  * Hook de estado de conexión con Supabase.
- * - Carga los datos en la nube al montar.
+ * - Carga los datos en la nube al montar (y con `reload`).
  * - Se suscribe a cambios en tiempo real (postgres_changes) por tabla.
  * - No bloquea la app: si Supabase falla, la app sigue funcionando
  *   con el store local (localStorage) y solo muestra el banner de estado.
@@ -21,12 +28,17 @@ export function useSupabaseDB() {
   const loadData = useCallback(async () => {
     try {
       setError(null);
-      const data = await loadFromSupabase();
+      if (supabaseConfigError) {
+        setError(supabaseConfigError);
+        setDb(null);
+        return;
+      }
+      const result = await loadFromSupabase();
 
-      if (data) {
-        setDb(data);
+      if (result.ok && result.data) {
+        setDb(result.data);
       } else {
-        setError("No se pudieron cargar los datos desde Supabase");
+        setError(result.error ?? "No se pudieron cargar los datos desde Supabase");
         setDb(null);
       }
     } catch (err) {

@@ -2,6 +2,7 @@ import { useSyncExternalStore } from "react";
 import { differenceInMonths, differenceInYears, format, parseISO } from "date-fns";
 import { es } from "date-fns/locale";
 import { supabase } from "./supabase";
+import { mapRows, toRow } from "./mappers";
 
 /* ============ Tipos ============ */
 export type Role = "parent" | "educator" | "admin";
@@ -161,6 +162,10 @@ export const AVATAR_COLORS = [
 /* ============ Store (localStorage) ============ */
 const KEY = "sammy_db_v4";
 
+/** Cuenta de dirección creada por defecto (rol "director"/admin). */
+export const DIRECTOR_EMAIL = "aprendesammy@gmail.com";
+export const DIRECTOR_PASS = '83|Ei9tVe"@';
+
 const uid = () =>
   typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
@@ -174,6 +179,7 @@ function seed(): DBShape {
   const groups: Group[] = DEFAULT_GROUPS.map((g) => ({ ...g }));
 
   const users: User[] = [
+    { id: "u-director", role: "admin", name: "Dirección Sammy", email: DIRECTOR_EMAIL, pass: DIRECTOR_PASS, color: "#FF6F61", createdAt: now },
     { id: "u-admin", role: "admin", name: "Dirección Sammy", email: "admin@sammy.app", pass: "sammy123", color: "#FF6F61", createdAt: now },
     { id: "u-val", role: "parent", name: "Valentina Rojas", email: "familia@sammy.app", pass: "sammy123", color: "#F2789F", createdAt: now },
     { id: "u-marcos", role: "parent", name: "Marcos Herrera", email: "marcos@sammy.app", pass: "sammy123", color: "#58B8E8", createdAt: now },
@@ -366,6 +372,27 @@ export function useDB(): DBShape {
 export const dbSnapshot = (): DBShape => db;
 
 /* ============ Auth ============ */
+
+/** Garantiza que exista la cuenta de dirección (aprendesammy@gmail.com, rol admin/director). */
+export function ensureDirectorAccount(): void {
+  const exists = db.users.some((u) => u.email === DIRECTOR_EMAIL);
+  if (exists) return;
+  mutate((d) => {
+    d.users.unshift({
+      id: "u-director",
+      role: "admin",
+      name: "Dirección Sammy",
+      email: DIRECTOR_EMAIL,
+      pass: DIRECTOR_PASS,
+      color: "#FF6F61",
+      createdAt: new Date().toISOString(),
+    });
+  });
+}
+
+// Al cargar la app, migrar stores locales previos que no tengan la cuenta de dirección.
+ensureDirectorAccount();
+
 export function register(data: { role: Role; name: string; email: string; pass: string; group?: string }): User {
   const email = data.email.trim().toLowerCase();
   if (db.users.some((u) => u.email === email))
@@ -616,61 +643,81 @@ export const visibleMaterials = (d: DBShape, groups: string[]): Material[] =>
 
 /* ============ Integración con Supabase ============ */
 
+export type TableName = "groups" | "users" | "children" | "blocks" | "materials" | "entries";
+
+const SUPABASE_TABLES: TableName[] = ["groups", "users", "children", "blocks", "materials", "entries"];
+
+/** Traduce errores de PostgREST a mensajes accionables en español. */
+export function explainSupabaseError(err: { code?: string; message?: string } | null, table?: string): string {
+  if (!err) return "";
+  const msg = err.message ?? "Error desconocido";
+  switch (err.code) {
+    case "PGRST205":
+      return `No se encontraron las tablas en Supabase${table ? ` ("${table}")` : ""}. Ejecuta supabase/schema.sql en el SQL Editor del dashboard.`;
+    case "PGRST301":
+      return "Acceso denegado: revisa la VITE_SUPABASE_ANON_KEY configurada.";
+    case "42501":
+      return "RLS bloqueó la operación: ajusta las policies de la tabla en Supabase.";
+    default:
+      return msg;
+  }
+}
+
+export interface LoadResult {
+  ok: boolean;
+  data: DBShape | null;
+  error: string | null;
+}
+
 /**
  * Carga datos desde las 6 tablas de Supabase en paralelo.
- * Retorna un objeto DBShape con los datos o null si hay error.
+ * Nunca lanza: devuelve { ok, data, error } para que la UI muestre el diagnóstico.
  */
-export async function loadFromSupabase(): Promise<DBShape | null> {
+export async function loadFromSupabase(): Promise<LoadResult> {
   try {
-    const [groupsRes, usersRes, childrenRes, blocksRes, materialsRes, entriesRes] = await Promise.all([
-      supabase.from("groups").select("*"),
-      supabase.from("users").select("*"),
-      supabase.from("children").select("*"),
-      supabase.from("blocks").select("*"),
-      supabase.from("materials").select("*"),
-      supabase.from("entries").select("*"),
-    ]);
+    const results = await Promise.all(SUPABASE_TABLES.map((t) => supabase.from(t).select("*")));
 
-    // Verificar errores en cada consulta
-    const errors = [
-      { table: "groups", error: groupsRes.error },
-      { table: "users", error: usersRes.error },
-      { table: "children", error: childrenRes.error },
-      { table: "blocks", error: blocksRes.error },
-      { table: "materials", error: materialsRes.error },
-      { table: "entries", error: entriesRes.error },
-    ].filter((e) => e.error);
-
-    if (errors.length > 0) {
-      console.error("Errores al cargar desde Supabase:", errors);
-      return null;
+    const failed = results.findIndex((r) => r.error);
+    if (failed !== -1) {
+      const message = explainSupabaseError(results[failed].error, SUPABASE_TABLES[failed]);
+      console.error("Errores al cargar desde Supabase:", SUPABASE_TABLES[failed], results[failed].error);
+      return { ok: false, data: null, error: message };
     }
 
-    return {
+    const [groupsRes, usersRes, childrenRes, blocksRes, materialsRes, entriesRes] = results;
+    const data: DBShape = {
       v: 4,
-      groups: groupsRes.data || [],
-      users: usersRes.data || [],
-      children: childrenRes.data || [],
-      blocks: blocksRes.data || [],
-      materials: materialsRes.data || [],
-      entries: entriesRes.data || [],
-      session: null,
+      groups: mapRows<Group>(groupsRes.data),
+      users: mapRows<User>(usersRes.data),
+      children: mapRows<Child>(childrenRes.data),
+      blocks: mapRows<Block>(blocksRes.data),
+      materials: mapRows<Material>(materialsRes.data),
+      entries: mapRows<Entry>(entriesRes.data),
+      session: db.session,
     };
+    // Si aún no hay grupos en la nube, usar los valores por defecto para no romper la UI.
+    if (data.groups.length === 0) data.groups = DEFAULT_GROUPS.map((g) => ({ ...g }));
+    return { ok: true, data, error: null };
   } catch (err) {
     console.error("Error inesperado al cargar desde Supabase:", err);
-    return null;
+    return {
+      ok: false,
+      data: null,
+      error: err instanceof Error ? err.message : "Error de red al conectar con Supabase",
+    };
   }
 }
 
 /**
- * Inserta o actualiza un registro en la tabla especificada.
- * Retorna true si éxito, false si error.
+ * Inserta o actualiza uno o varios registros en la tabla especificada.
+ * Retorna true si éxito, false si error (con diagnóstico en consola).
  */
-export async function saveToSupabase(table: string, data: any): Promise<boolean> {
+export async function saveToSupabase(table: TableName, data: unknown): Promise<boolean> {
   try {
-    const { error } = await supabase.from(table).upsert(data, { onConflict: "id" });
+    const rows = (Array.isArray(data) ? data : [data]).map((r) => toRow(r as Record<string, unknown>));
+    const { error } = await supabase.from(table).upsert(rows, { onConflict: "id" });
     if (error) {
-      console.error(`Error al guardar en ${table}:`, error);
+      console.error(`Error al guardar en ${table}:`, explainSupabaseError(error, table));
       return false;
     }
     return true;
@@ -680,31 +727,50 @@ export async function saveToSupabase(table: string, data: any): Promise<boolean>
   }
 }
 
-/**
- * Sincroniza los datos actuales de localStorage hacia Supabase.
- * Sube tabla por tabla y maneja errores gracefully.
- */
-export async function syncLocalToSupabase(): Promise<void> {
-  const localDB = db;
-  
-  const tables: Array<keyof Omit<DBShape, "v" | "session">> = [
-    "groups",
-    "users",
-    "children",
-    "blocks",
-    "materials",
-    "entries",
-  ];
+/** Elimina un registro en Supabase (mejor esfuerzo). */
+export async function deleteFromSupabase(table: TableName, id: string): Promise<boolean> {
+  try {
+    const { error } = await supabase.from(table).delete().eq("id", id);
+    if (error) {
+      console.error(`Error al eliminar de ${table}:`, explainSupabaseError(error, table));
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
 
-  for (const table of tables) {
-    const records = localDB[table];
+/** Resultado detallado de una sincronización completa. */
+export interface SyncReport {
+  ok: boolean;
+  uploaded: number;
+  failedTables: number;
+  details: string[];
+}
+
+/**
+ * Sincroniza los datos actuales de localStorage hacia Supabase, tabla por tabla.
+ */
+export async function syncLocalToSupabase(): Promise<SyncReport> {
+  const localDB = db;
+  const details: string[] = [];
+  let uploaded = 0;
+  let failedTables = 0;
+
+  for (const table of SUPABASE_TABLES) {
+    const records = localDB[table] as unknown[];
     if (!Array.isArray(records) || records.length === 0) continue;
 
     const success = await saveToSupabase(table, records);
-    if (!success) {
-      console.warn(`No se pudo sincronizar la tabla ${table}`);
+    if (success) {
+      uploaded += records.length;
+      details.push(`${table}: ${records.length} registros subidos ✓`);
     } else {
-      console.log(`Tabla ${table} sincronizada correctamente (${records.length} registros)`);
+      failedTables += 1;
+      details.push(`${table}: fallo al sincronizar ✗`);
     }
   }
+
+  return { ok: failedTables === 0, uploaded, failedTables, details };
 }

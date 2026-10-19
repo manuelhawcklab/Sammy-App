@@ -12,12 +12,14 @@ import {
   Home,
   Layers,
   LogOut,
+  RefreshCw,
   Settings,
   Smartphone,
   TrendingUp,
   Users,
+  X,
 } from "lucide-react";
-import { currentUser, groupById, logout, saveToSupabase, useDB } from "./lib/db";
+import { currentUser, groupById, logout, useDB } from "./lib/db";
 import type { Role, User } from "./lib/db";
 import { useInstall } from "./lib/pwa";
 import { useSupabaseDB } from "./lib/useSupabaseDB";
@@ -289,42 +291,82 @@ function Shell({ me }: { me: User }) {
   );
 }
 
+/** Bandera de estado de conexión con Supabase (no bloqueante). */
+function ConnectionBanner() {
+  const { loading, error, db: cloud, reload } = useSupabaseDB();
+  const [dismissed, setDismissed] = useState(false);
+
+  if (dismissed && !loading) return null;
+
+  let tone = "";
+  let content: ReactNode = null;
+  if (loading) {
+    tone = "bg-sea";
+    content = (
+      <span className="inline-flex items-center gap-2">
+        <RefreshCw size={13} className="animate-spin" /> Conectando con la nube…
+      </span>
+    );
+  } else if (error) {
+    tone = "bg-coraldeep";
+    content = (
+      <span className="inline-flex max-w-full items-center gap-2">
+        ⚠️ Sin conexión con Supabase: {error}. Los cambios se guardan en este dispositivo.
+      </span>
+    );
+  } else if (cloud) {
+    tone = "bg-seadeep";
+    content = (
+      <span className="inline-flex items-center gap-2">
+        <Check size={13} strokeWidth={3} /> Nube sincronizada · {cloud.users.length} usuarios ·{" "}
+        {cloud.children.length} niños
+      </span>
+    );
+  } else {
+    return null;
+  }
+
+  return (
+    <div
+      className={`${tone} fixed inset-x-0 top-0 z-[60] flex items-center justify-center gap-3 px-4 py-1.5 text-center font-display text-[12px] font-semibold text-white shadow-toy-xs`}
+    >
+      {content}
+      {!loading && (
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => void reload()}
+            title="Reintentar conexión"
+            className="btn-toy rounded-lg border-2 border-white/30 p-1 hover:bg-white/15"
+          >
+            <RefreshCw size={12} />
+          </button>
+          <button
+            onClick={() => setDismissed(true)}
+            title="Ocultar"
+            className="btn-toy rounded-lg border-2 border-white/30 p-1 hover:bg-white/15"
+          >
+            <X size={12} />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Root() {
   const db = useDB();
   const me = currentUser(db);
-  const { db: supabaseDb, loading, error } = useSupabaseDB();
 
-  // Banner de estado de conexión a Supabase (informativo; la app
-  // funciona siempre con el store local aunque la nube falle)
-  const connectionBanner = (() => {
-    if (loading) {
-      return (
-        <div className="fixed top-0 left-0 right-0 z-50 bg-blue-500 text-white text-center py-2 text-sm font-semibold">
-          🔄 Conectando a la nube...
-        </div>
-      );
-    }
-    if (error) {
-      return (
-        <div className="fixed top-0 left-0 right-0 z-50 bg-red-500 text-white text-center py-2 text-sm font-semibold">
-          ❌ Error de conexión: {error} — los cambios se guardan localmente
-        </div>
-      );
-    }
-    if (supabaseDb) {
-      return (
-        <div className="fixed top-0 left-0 right-0 z-50 bg-green-500 text-white text-center py-2 text-sm font-semibold">
-          ✅ Conectado a Supabase | Grupos: {supabaseDb.groups.length} | Usuarios: {supabaseDb.users.length}
-        </div>
-      );
-    }
-    return null;
-  })();
-
-  if (!me) return <Login />;
+  if (!me)
+    return (
+      <>
+        <ConnectionBanner />
+        <Login />
+      </>
+    );
   return (
     <>
-      {connectionBanner}
+      <ConnectionBanner />
       <Shell key={me.id} me={me} />
     </>
   );

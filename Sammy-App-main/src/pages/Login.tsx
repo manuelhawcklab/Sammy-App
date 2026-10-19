@@ -1,5 +1,5 @@
-import { useState } from "react";
-import type { FormEvent, ReactNode } from "react";
+import { useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import confetti from "canvas-confetti";
 import {
   CalendarDays,
@@ -14,16 +14,18 @@ import {
   UserPlus,
   Users,
 } from "lucide-react";
-import { supabase } from "../lib/supabase";
+import { pingSupabase, supabase, supabaseConfigError } from "../lib/supabase";
 import {
   allGroups,
   dbSnapshot,
+  DIRECTOR_EMAIL,
   mutate,
   register as registerLocal,
   saveToSupabase,
   type Role,
   type User as DBUser,
 } from "../lib/db";
+import { mapRow } from "../lib/mappers";
 import {
   Button,
   Field,
@@ -72,6 +74,22 @@ export default function Login() {
   const [group, setGroup] = useState(() => allGroups()[0]?.id ?? "");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
+  const [cloud, setCloud] = useState<{ ok: boolean; detail: string } | null>(null);
+
+  // Diagnóstico de conexión con Supabase al montar la pantalla de acceso.
+  useEffect(() => {
+    let alive = true;
+    if (supabaseConfigError) {
+      setCloud({ ok: false, detail: supabaseConfigError });
+      return;
+    }
+    void pingSupabase().then((r) => {
+      if (alive) setCloud(r);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const validate = () => {
     const e: Record<string, string> = {};
@@ -82,28 +100,36 @@ export default function Login() {
     return Object.keys(e).length === 0;
   };
 
-  const submit = async (ev: FormEvent) => {
+  const submit = async (ev: React.FormEvent) => {
     ev.preventDefault();
     if (!validate()) return;
     setLoading(true);
-    
+
     try {
       if (mode === "login") {
-        // 1) Intentar autenticación contra Supabase (producción)
-        const { data, error } = await supabase
-          .from("users")
-          .select("*")
-          .eq("email", email.trim().toLowerCase())
-          .eq("pass", pass)
-          .maybeSingle();
+        const emailNorm = email.trim().toLowerCase();
 
-        let user: DBUser | null = error ? null : (data as DBUser | null);
+        // 1) Intentar autenticación contra Supabase (producción)
+        let user: DBUser | null = null;
+        if (!supabaseConfigError) {
+          const { data, error } = await supabase
+            .from("users")
+            .select("*")
+            .eq("email", emailNorm)
+            .maybeSingle();
+          if (!error && data) {
+            const mapped = mapRow<DBUser>(data);
+            if (mapped && mapped.pass === pass) user = mapped;
+          } else if (error) {
+            console.warn("Login: Supabase no disponible, usando store local:", error.message);
+          }
+        }
 
         // 2) Respaldo local: si la nube falla o no encuentra al usuario,
         //    se intenta con el store local para que la app nunca se bloquee.
         if (!user) {
           const local = dbSnapshot().users.find(
-            (u) => u.email === email.trim().toLowerCase() && u.pass === pass
+            (u) => u.email === emailNorm && u.pass === pass
           );
           if (local) user = local;
         }
@@ -115,27 +141,23 @@ export default function Login() {
         }
 
         // Actualizar sesión usando mutate() - esto dispara el evento de actualización
+        const loggedIn = user;
         mutate((d) => {
-          d.session = user!.id;
+          d.session = loggedIn.id;
           // Asegurar que el usuario esté en la lista local
-          if (!d.users.some((u) => u.id === user!.id)) {
-            d.users.push(user!);
+          if (!d.users.some((u) => u.id === loggedIn.id)) {
+            d.users.push(loggedIn);
           } else {
             // Actualizar usuario existente
-            const idx = d.users.findIndex((u) => u.id === user!.id);
-            d.users[idx] = user!;
+            const idx = d.users.findIndex((u) => u.id === loggedIn.id);
+            d.users[idx] = loggedIn;
           }
         });
 
         // Sincronizar el usuario hacia la nube (mejor esfuerzo, no bloquea el login)
-        void saveToSupabase("users", user);
+        void saveToSupabase("users", loggedIn);
 
-        toast("success", `¡Hola de nuevo, ${user.name.split(" ")[0]}!`);
-
-        // Redirigir al dashboard después de un breve delay
-        setTimeout(() => {
-          window.location.href = "/";
-        }, 800);
+        toast("success", `¡Hola de nuevo, ${loggedIn.name.split(" ")[0]}!`);
       } else {
         // Registro: crear cuenta en el store local…
         const u = registerLocal({ role, name, email, pass, group });
@@ -340,6 +362,37 @@ export default function Login() {
           <p className="mt-4 text-center text-xs font-bold text-ink/40">
             Hecho con cariño para peques curiosos 🐼
           </p>
+
+          {/* Diagnóstico de conexión + acceso de dirección */}
+          <div className="mt-3 flex items-center justify-center gap-2 text-[11px] font-bold">
+            <ShieldCheck
+              size={13}
+              className={cloud === null ? "text-ink/30" : cloud.ok ? "text-sea" : "text-coral"}
+            />
+            {cloud === null ? (
+              <span className="text-ink/40">Comprobando conexión con la nube…</span>
+            ) : cloud.ok ? (
+              <span className="text-sea/80">Conexión con Supabase activa</span>
+            ) : (
+              <span className="text-coraldeep/80" title={cloud.detail}>
+                Sin nube: los datos se guardan en este dispositivo
+              </span>
+            )}
+          </div>
+          {!email && !pass && (
+            <button
+              type="button"
+              onClick={() => {
+                setEmail(DIRECTOR_EMAIL);
+                setPass("");
+                setMode("login");
+                toast("info", "Correo de dirección cargado. Escribe tu contraseña.");
+              }}
+              className="btn-toy mx-auto mt-2 block rounded-lg border-2 border-dashed border-ink/25 px-3 py-1.5 text-[11px] font-black text-ink/50 hover:bg-paper"
+            >
+              🛡️ Acceso Dirección · {DIRECTOR_EMAIL}
+            </button>
+          )}
         </div>
       </div>
     </div>
